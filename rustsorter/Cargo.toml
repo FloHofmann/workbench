@@ -6,4 +6,6 @@ edition = "2024"
 [dependencies]
 eframe = "0.31.1"
 egui_plot = "0.32.1"
+hdf5 = "0.8.1"
+matio-rs = "1.4.1"
 random = "0.14.0"
