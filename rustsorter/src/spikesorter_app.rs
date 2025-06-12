@@ -14,12 +14,17 @@ enum AppState {
 
 pub struct SpikeSorterApp {
     trace_data: Vec<[f64; 2]>,
+    sr: f64,
     threshold: Option<f64>,
     state: AppState,
 }
 
 impl Default for SpikeSorterApp {
     /// Default implementation to test the system on artificial signal
+    /// trace data are the y values from the voltage signal
+    /// sr is the sampling rate of the signal. Is set to 25000 as default
+    /// threshold is a placeholder for later sorting operations
+    /// state is the state of the spikesorter window
     fn default() -> Self {
         let trace_data = (0..25000)
             .map(|i| {
@@ -30,6 +35,7 @@ impl Default for SpikeSorterApp {
 
         Self {
             trace_data,
+            sr: 25000.0,
             threshold: None,
             state: AppState::Normal,
         }
@@ -38,6 +44,7 @@ impl Default for SpikeSorterApp {
 
 impl eframe::App for SpikeSorterApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // keypress of 't' will enable or disable the threshold setting mode
         if ctx.input(|i| i.key_pressed(egui::Key::T)) {
             match self.state {
                 AppState::Normal => {
@@ -49,7 +56,7 @@ impl eframe::App for SpikeSorterApp {
                     println!("Threshold mode OFF.");
                 }
                 AppState::ThresholdLocked => {
-                    // if lockec 't' doesn't toggle anything
+                    // if locked 't' doesn't toggle anything
                 }
             }
         }
@@ -61,6 +68,14 @@ impl eframe::App for SpikeSorterApp {
                 println!("Threshold locked at {:?}", self.threshold);
             }
         }
+
+        // allows to revert setting the threshold and returns to the original trace to set it again
+        if ctx.input(|i| i.key_pressed(egui::Key::R)) && self.state == AppState::ThresholdLocked {
+            self.state = AppState::Normal;
+            self.threshold = None;
+            println!("Threshold cleared, ready to set a fresh one")
+        }
+
         CentralPanel::default().show(ctx, |ui| match self.state {
             AppState::ThresholdLocked => {
                 egui_plot::Plot::new("locked threshold").show(ui, |plot_ui| {
@@ -112,4 +127,3 @@ impl eframe::App for SpikeSorterApp {
         });
     }
 }
-
