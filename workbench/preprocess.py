@@ -72,7 +72,8 @@ class SpikeSorter:
         spike_refractory = 1 * MS
         idx_spike_refractory = round(spike_refractory * SR)
 
-        peaks = find_peaks(filtered, height=coordinates[0][1], distance=idx_spike_refractory)
+        peaks = find_peaks(
+            filtered, height=coordinates[0][1], distance=idx_spike_refractory)
         peakheight = peaks[1]['peak_heights']
         peakloc = peaks[0]
 
@@ -83,8 +84,10 @@ class SpikeSorter:
         peakloc = np.delete(peakloc, (peakloc < idx_range_post))
 
         # Remove peaks right before the recording stops
-        peakheight = np.delete(peakheight, (peakloc > len(filtered) - idx_range_post))
-        peakloc = np.delete(peakloc, (peakloc > len(filtered) - idx_range_post))
+        peakheight = np.delete(
+            peakheight, (peakloc > len(filtered) - idx_range_post))
+        peakloc = np.delete(
+            peakloc, (peakloc > len(filtered) - idx_range_post))
 
         num_spikes = len(peakheight)  # get number of spikes from peaks
 
@@ -96,9 +99,11 @@ class SpikeSorter:
         spk_trace = np.zeros((num_spikes, idx_range + 1))
 
         for i in range(num_spikes):
-            spk_trace[i, :] = filtered[spike_indices_pre[i]:spike_indices_post[i] + 1]
+            spk_trace[i, :] = filtered[spike_indices_pre[i]
+                :spike_indices_post[i] + 1]
 
-        spike_trace_time = np.divide(np.array(list(range(0, idx_range + 1))), SR)
+        spike_trace_time = np.divide(
+            np.array(list(range(0, idx_range + 1))), SR)
         self.pca = PCA(n_components=2, random_state=16)
         output = self.pca.fit_transform(spk_trace).transpose()
 
@@ -158,7 +163,8 @@ class SpikeSorter:
         ax_pca.clear()
 
         # plot ephys trace
-        ax_ephys.plot(self.data['recording']['session_time'], self.data['recording']['filtered_raw'])
+        ax_ephys.plot(self.data['recording']['session_time'],
+                      self.data['recording']['filtered_raw'])
         ax_ephys.plot(self.data['recording']['session_spiketimes'], self.data['recording']['session_peaks'],
                       'r.')
         ax_ephys.set_xlabel('Time (s)')
@@ -173,15 +179,18 @@ class SpikeSorter:
         ax_spikes.set_xlim([0, max(self.data['processed']['spk_trace_time'])])
 
         # plot pca scatter
-        ax_pca.scatter(self.data['processed']['pca_out'][0, :], self.data['processed']['pca_out'][1, :], marker='.')
+        ax_pca.scatter(self.data['processed']['pca_out'][0, :],
+                       self.data['processed']['pca_out'][1, :], marker='.')
         ax_pca.set_xlabel('PCA 1')
         ax_pca.set_ylabel('PCA 2')
 
         # plot isi
         MIN, MAX = min(self.data['processed']['isis']), max(
-            self.data['processed']['isis'])  # retrieve min max to set range for bins
+            # retrieve min max to set range for bins
+            self.data['processed']['isis'])
         ax_isi.hist(self.data['processed']['isis'],
-                    bins=10 ** np.linspace(np.log10(MIN), np.log10(MAX), 50))  # calc logarithmic bins
+                    # calc logarithmic bins
+                    bins=10 ** np.linspace(np.log10(MIN), np.log10(MAX), 50))
         ax_isi.set_xscale("log")
         ax_isi.set_xlabel('Time [ms]')
 
@@ -251,7 +260,8 @@ class SpikeSorter:
                 # Adjust the other values
                 self.data['processed']['pca_out'] = self.pca.fit_transform(
                     self.data['processed']['spk_trace']).transpose()
-                self.data['processed']['isis'] = np.diff(self.data['recording']['session_spiketimes']) * 1000
+                self.data['processed']['isis'] = np.diff(
+                    self.data['recording']['session_spiketimes']) * 1000
                 self.latest_change.append(removed_entries)
             self.plot_data()
 
@@ -269,7 +279,8 @@ class SpikeSorter:
                 self.data['recording']['session_spiketimes'], self.latest_change[-1]['del_times'])
             self.data['recording']['session_peaks'] = np.array([x for _, x in sorted(
                 zip(self.data['recording']['session_spiketimes'], self.data['recording']['session_peaks']))])
-            self.data['recording']['session_spiketimes'] = sorted(self.data['recording']['session_spiketimes'])
+            self.data['recording']['session_spiketimes'] = sorted(
+                self.data['recording']['session_spiketimes'])
             self.data['processed']['pca_out'] = self.pca.fit_transform(
                 self.data['processed']['spk_trace'].transpose()).transpose()
             self.latest_change = self.latest_change[:-1]
@@ -302,7 +313,8 @@ class SpikeSorter:
                                                                  selected_datapoints)
         self.data['processed']['spk_trace'] = np.delete(self.data['processed']['spk_trace'], selected_datapoints,
                                                         axis=1)
-        self.data['processed']['pca_out'] = np.delete(self.data['processed']['pca_out'], selected_datapoints, axis=1)
+        self.data['processed']['pca_out'] = np.delete(
+            self.data['processed']['pca_out'], selected_datapoints, axis=1)
 
         self.latest_change.append(removed_entries)
         self.plot_data()

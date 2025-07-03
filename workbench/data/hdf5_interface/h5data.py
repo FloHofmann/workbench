@@ -2,12 +2,12 @@
 This class will be filled up with the data from the hdf5 files
 """
 import h5py
-import numpy as np
+from typing import Union
 from pathlib import Path
 
 
 class h5data:
-    def __init__(self, path: Path):
+    def __init__(self, path: Union[Path, str]):
         """
         initializes the class.
         Will load the corresponding h5 file and start
@@ -19,6 +19,8 @@ class h5data:
         self.raw_data = {}
         self.processed_data = {}
         self.waveform = {}
+        if isinstance(path, (str)):
+            path = Path(path)
 
         # retrieval of raw data from the exported mat file
         with h5py.File(path, "r") as f:
@@ -70,6 +72,12 @@ class h5data:
         temp_dict['units'] = f[key]['units'][:]
         temp_dict['values'] = f[key]['values'][:].flatten()
         return temp_dict
+
+    def export_processed_data(self):
+        # this function should export the processed data to a h5file/numpy
+        # file.
+        # tbd.... this will be saved in the same folder as the raw_data h5file
+        return 'exported'
 
 
 if __name__ == '__main__':

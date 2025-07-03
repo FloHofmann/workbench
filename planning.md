@@ -14,3 +14,8 @@
 
 ## Figures
 -[ ] function for formatting figures and saving as .pdf and .png at defined path
+
+
+## ToDo
+- [ ] spikesorting with pyqt6
+- [ ] implement class function of saving/appending data to h5data class
