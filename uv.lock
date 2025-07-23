@@ -1984,7 +1984,7 @@ wheels = [
 [[package]]
 name = "workbench"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "gitpython" },
     { name = "h5df" },
