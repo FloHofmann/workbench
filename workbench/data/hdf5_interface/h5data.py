@@ -2,11 +2,14 @@
 This class will be filled up with the data from the hdf5 files
 """
 import h5py
+import re
 from typing import Union
 from pathlib import Path
 
+from workbench.data.spikesorter import spikesorter
 
-class h5data:
+
+class loadmat:
     def __init__(self, path: Union[Path, str]):
         """
         initializes the class.
@@ -19,12 +22,15 @@ class h5data:
         self.raw_data = {}
         self.processed_data = {}
         self.waveform = {}
+        print(path)
+        # extract metadata from path
+
         if isinstance(path, (str)):
             path = Path(path)
+        self.info['path'] = str(path)
 
         # retrieval of raw data from the exported mat file
         with h5py.File(path, "r") as f:
-            self.info['folderpath'] = path
 
             file_keys = f.keys()
             # load the raw_data
@@ -74,9 +80,21 @@ class h5data:
         return temp_dict
 
     def export_processed_data(self):
+        """
+        the loaded data from the .mat file is routed through the spikesorter.
+        also looks for any baseline videos to perform tracking on.
+        """
+        import sys
+        from PyQt6.QtWidgets import QApplication
+
         # this function should export the processed data to a h5file/numpy
         # file.
         # tbd.... this will be saved in the same folder as the raw_data h5file
+        app = QApplication(sys.argv)
+        window = spikesorter(self)
+        window.show()
+        sys.exit(app.exec())
+
         return 'exported'
 
 

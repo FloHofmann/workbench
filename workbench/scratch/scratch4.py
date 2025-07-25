@@ -12,7 +12,8 @@ class MainWindow(QMainWindow):
         # Sampling parameters
         self.fs = 10000  # Hz
         self.t = np.linspace(0, 1, self.fs)
-        self.trace = np.sin(2 * np.pi * 10 * self.t) + 0.3 * np.random.randn(len(self.t))
+        self.trace = np.sin(
+            2 * np.pi * 10 * self.t) + 0.3 * np.random.randn(len(self.t))
         self.threshold = None
 
         # State: 'threshold' or 'analysis'
@@ -51,7 +52,8 @@ class MainWindow(QMainWindow):
         self.plot_widget.addItem(self.hLine, ignoreBounds=True)
 
         # Add threshold line (hidden initially)
-        self.thresholdLine = pg.InfiniteLine(angle=0, movable=False, pen=pg.mkPen('r', width=2))
+        self.thresholdLine = pg.InfiniteLine(
+            angle=0, movable=False, pen=pg.mkPen('r', width=2))
         self.plot_widget.addItem(self.thresholdLine)
         if self.threshold is None:
             self.thresholdLine.hide()
@@ -104,7 +106,8 @@ class MainWindow(QMainWindow):
 
         # Top: spikes across full width
         self.spikes_plot = pg.PlotWidget(title="Aligned Spikes")
-        self.layout.addWidget(self.spikes_plot, 0, 0, 1, 2)  # row 0, col 0, span 1x2
+        self.layout.addWidget(self.spikes_plot, 0, 0, 1,
+                              2)  # row 0, col 0, span 1x2
 
         # Bottom left: PCA placeholder
         self.pca_plot = pg.PlotWidget(title="PCA Placeholder")
@@ -164,7 +167,7 @@ class MainWindow(QMainWindow):
                 y,
                 stepMode=True,
                 fillLevel=0,
-                brush=(0,0,255,50)
+                brush=(0, 0, 255, 50)
             )
             self.isi_plot.setLabel('bottom', 'ISI (ms)')
             self.isi_plot.setLabel('left', 'Count')
@@ -175,4 +178,3 @@ if __name__ == '__main__':
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
-
