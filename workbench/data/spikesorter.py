@@ -1,9 +1,9 @@
 import numpy as np
+from scipy.signal import find_peaks
 import sys
 from pathlib import Path
-from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QGridLayout
+from PyQt6.QtWidgets import QMainWindow, QWidget, QGridLayout
 from PyQt6.QtCore import Qt
-from pyqtgraph.Qt import QtGui
 import pyqtgraph as pg
 from typing import Union
 from scipy.signal import firwin, filtfilt, find_peaks
@@ -20,9 +20,7 @@ class spikesorter(QMainWindow):
         if args:
             # ToDo Here's the next point of attack
             data = args[0]
-            self.filter_trace(data)
-            # this needs to be done next
-            print('class is found')
+            self.__filter_trace(data)
         else:
             self.fs = 25000  # Hz
             self.t = np.linspace(0, 1, self.fs)
@@ -44,7 +42,7 @@ class spikesorter(QMainWindow):
 
     def setupThresholdingView(self):
         self.state = 'threshold'
-
+        self.undo_stack = []
         # Clear layout
         for i in reversed(range(self.layout.count())):
             widget = self.layout.itemAt(i).widget()
@@ -57,7 +55,7 @@ class spikesorter(QMainWindow):
 
         # Plot the trace
         curve = pg.PlotCurveItem(
-            self.t, self.trace, pen='y', downsample=10, clipToView=True)
+            self.t, self.trace, pen='y', downsample=20, clipToView=True)
         self.plot_widget.addItem(curve)
         self.plot_widget.setMouseEnabled(x=True, y=True)
         self.plot_widget.showGrid(x=True, y=True)
@@ -92,16 +90,46 @@ class spikesorter(QMainWindow):
             self.hLine.setPos(y)
 
     def mouseClicked(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
+        if self.state == 'threshold':
+            if event.button() == Qt.MouseButton.LeftButton:
+                pos = event.scenePos()
+                vb = self.plot_widget.plotItem.vb
+                if vb.sceneBoundingRect().contains(pos):
+                    mousePoint = vb.mapSceneToView(pos)
+                    y = mousePoint.y()
+                    self.threshold = y
+                    self.thresholdLine.setPos(y)
+                    self.thresholdLine.show()
+                    print(f"Threshold set to: {y:.4f}")
+            else:
+                return
+
+        elif self.state == 'analysis':
             pos = event.scenePos()
-            vb = self.plot_widget.plotItem.vb
+            vb = self.spikes_plot.plotItem.vb
+            pcab = self.pca_plot.plotItem.vb
             if vb.sceneBoundingRect().contains(pos):
+                # spike overlay logic
                 mousePoint = vb.mapSceneToView(pos)
+                # todo this does not work yet, i need a workaround for finding the correct snippet to remove
+                x = mousePoint.x()
                 y = mousePoint.y()
-                self.threshold = y
-                self.thresholdLine.setPos(y)
-                self.thresholdLine.show()
-                print(f"Threshold set to: {y:.4f}")
+                # reuse your snippet_t
+                time_vector = np.linspace(-0.5, 1.5, self.snippets.shape[1])
+                # find closest time index
+                x_idx = np.argmin(np.abs(time_vector - x))
+
+                if -.5 <= x <= 1.5:
+                    self.undo_stack.append(self.filtered_mask.copy())
+                    if event.button() == Qt.MouseButton.LeftButton:
+                        self.filtered_mask &= self.snippets[:, x_idx] >= y
+                    elif event.button() == Qt.MouseButton.RightButton:
+                        self.filtered_mask &= self.snippets[:, x_idx] <= y
+
+                    self.updateSpikeOverlay()
+            elif pcab.sceneBoundingRect().contains(pos):
+                # PCA roi logic
+                self.startPcaRoi()
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Return and self.state == 'threshold' and self.threshold is not None:
@@ -111,6 +139,35 @@ class spikesorter(QMainWindow):
         elif event.key() == Qt.Key.Key_R and self.state == 'analysis':
             print("Returning to thresholding view.")
             self.setupThresholdingView()
+        elif event.key() == Qt.Key.Key_B and self.state == 'analysis':
+            if self.undo_stack:
+                self.filtered_mask = self.undo_stack.pop()
+                print("Undo: reverted to previous")
+                self.updateSpikeOverlay()
+            else:
+                print("Undo stack empty")
+
+    def updateSpikeOverlay(self):
+        snippets = self.snippets[self.filtered_mask]
+        if len(snippets) == 0:
+            return
+
+        n_spikes, n_samples = snippets.shape
+        snippets_nan = np.full((n_spikes, n_samples + 1), np.nan)
+        snippets_nan[:, :-1] = snippets
+
+        x_template = np.linspace(-0.5, 1.5, n_samples)
+        x_nan = np.full((n_spikes, n_samples + 1), np.nan)
+        x_nan[:, :-1] = np.tile(x_template, (n_spikes, 1))
+
+        # clear and re-add overlay
+        self.spikes_plot.clear()
+        multi_curve = pg.PlotDataItem(
+            x=x_nan.flatten(),
+            y=snippets_nan.flatten(),
+            pen=pg.mkPen((200, 200, 200, 50))
+        )
+        self.spikes_plot.addItem(multi_curve)
 
     def showAnalysisPlots(self):
         self.state = 'analysis'
@@ -123,67 +180,90 @@ class spikesorter(QMainWindow):
 
         # Top: spikes across full width
         self.spikes_plot = pg.PlotWidget(title="Aligned Spikes")
+        self.spikes_plot.plotItem.setMenuEnabled(False)
+        self.spikes_plot.scene().sigMouseClicked.connect(self.mouseClicked)
+
         self.layout.addWidget(self.spikes_plot, 0, 0, 1,
                               2)  # row 0, col 0, span 1x2
 
         # Bottom left: PCA placeholder
         self.pca_plot = pg.PlotWidget(title="PCA Placeholder")
+        self.pca_plot.setMouseEnabled(x=False, y=False)
+        self.pca_plot.plotItem.setMenuEnabled(False)
+        self.pca_plot.scene().sigMouseClicked.connect(self.mouseClicked)
         self.layout.addWidget(self.pca_plot, 1, 0)
 
         # Bottom right: ISI histogram
         self.isi_plot = pg.PlotWidget(title="ISI Histogram")
+        self.isi_plot.plotItem.setMenuEnabled(False)
         self.layout.addWidget(self.isi_plot, 1, 1)
 
         # Perform analysis
         self.detectAndPlotSpikes()
 
     def detectAndPlotSpikes(self):
-        # Detect spikes
-        above = np.where(self.trace > self.threshold)[0]
-        refractory = int(0.001 * self.fs)  # 1 ms refractory
-        peaks = []
+        # Parameters
+        refractory_samples = int(0.001 * self.fs)  # 1 ms
+        pre_window = round(0.0005 * self.fs)
+        post_window = round(0.0015 * self.fs)
+        prominence = 0.1                           # You can tune this
 
-        last_peak = -np.inf
-        for idx in above:
-            if idx - last_peak > refractory:
-                peaks.append(idx)
-                last_peak = idx
+        # Spike detection using find_peaks
+        peaks, properties = find_peaks(
+            self.trace,
+            height=self.threshold,
+            distance=refractory_samples,
+            prominence=prominence
+        )
 
-        peaks = np.array(peaks)
         print(f"Detected {len(peaks)} spikes")
 
-        # Extract waveforms
-        window = int(0.0015 * self.fs)  # 1.5 ms
+        # Extract spike snippets
         snippets = []
+        valid_peaks = []
+
         for p in peaks:
-            if p - window >= 0 and p + window < len(self.trace):
-                snippets.append(self.trace[p-window:p+window+1])
+            if p - pre_window >= 0 and p + post_window < len(self.trace):
+                snippet = self.trace[p - pre_window: p + post_window + 1]
+                snippets.append(snippet)
+                valid_peaks.append(p)
+
         snippets = np.array(snippets)
+        self.snippets = snippets
+        self.filtered_mask = np.ones(snippets.shape[0], dtype=bool)
 
-        # Time vector for snippets
-        snippet_t = np.linspace(-1.5, 1.5, snippets.shape[1])  # in ms
+        # NaN-interleaved spike overlay
+        n_spikes, n_samples = snippets.shape
+        snippets_nan = np.full((n_spikes, n_samples + 1), np.nan)
+        snippets_nan[:, :-1] = snippets
 
-        # Plot all snippets
-        colors = (200, 200, 200, 50)  # translucent gray
+        # Time vector from -0.5 ms to +1.5 ms
+        snippet_t = np.linspace(-pre_window / self.fs * 1000,
+                                post_window/self.fs * 1000,
+                                pre_window+post_window + 1)
+        x_nan = np.full((n_spikes, n_samples + 1), np.nan)
+        x_nan[:, :-1] = np.tile(snippet_t, (n_spikes, 1))
+
+        self.spikes_plot.clear()
         multi_curve = pg.PlotDataItem(
-            x=np.tile(snippet_t, snippets.shape[0]),
-            y=snippets.flatten(),
-            connect='segments',
-            pen=pg.mkPen(colors)
+            x=x_nan.flatten(),
+            y=snippets_nan.flatten(),
+            pen=pg.mkPen((200, 200, 200, 50))
         )
         self.spikes_plot.addItem(multi_curve)
-
         self.spikes_plot.setLabel('bottom', 'Time (ms)')
         self.spikes_plot.setLabel('left', 'Voltage')
 
         # PCA placeholder
-        self.pca_plot.plot([0, 1, 2], [0, 1, 0], pen=None, symbol='o')
+        self.pca_data = PCA(n_components=2).fit_transform(self.snippets)
+        self.pca_plot.plot(self.pca_data, pen=None, symbol='o')
         self.pca_plot.setLabel('bottom', 'PC1')
         self.pca_plot.setLabel('left', 'PC2')
 
         # ISI histogram
-        if len(peaks) > 1:
-            isis = np.diff(peaks) / self.fs * 1000  # in ms
+        valid_peaks = np.array(valid_peaks)
+        if len(valid_peaks) > 1:
+            isis = np.diff(valid_peaks) / self.fs * 1000  # in ms
             y, xedges = np.histogram(isis, bins=50, range=(0, 100))
             self.isi_plot.plot(
                 xedges,
@@ -195,7 +275,7 @@ class spikesorter(QMainWindow):
             self.isi_plot.setLabel('bottom', 'ISI (ms)')
             self.isi_plot.setLabel('left', 'Count')
 
-    def filter_trace(self, data):
+    def __filter_trace(self, data):
         self.fs = 25000
         CUTOFF = 300
         N = 2 ** 8
