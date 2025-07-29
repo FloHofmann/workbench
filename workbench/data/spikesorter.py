@@ -10,6 +10,8 @@ from typing import Union
 from scipy.signal import firwin, filtfilt, find_peaks
 from sklearn.decomposition import PCA
 
+from workbench.data.sorterhelp import PCARubberbandSelector
+
 PathLike = Union[str, Path]
 
 
@@ -91,7 +93,7 @@ class spikesorter(QMainWindow):
                     self.updatePlots()
 
             elif pca_vb.sceneBoundingRect().contains(pos):
-                mousePoint = spikes_vb.mapSceneToView(pos)
+                mousePoint = pca_vb.mapSceneToView(pos)
 
                 self.updatePlots()
             else:
@@ -112,6 +114,15 @@ class spikesorter(QMainWindow):
 
         elif event.key() == Qt.Key.Key_G and self.state == 'analysis':
             self.removeThroughRoi()
+
+        elif event.key() == Qt.Key.Key_E and self.state == 'analysis':
+                    if hasattr(self, 'pca_selector'):
+                        mask = self.pca_selector.get_mask()
+                        self.undo_stack.append(self.filtered_mask.copy())
+                        self.filtered_mask &= ~mask
+                        print(f"Removed {np.sum(mask)} spikes via PCA selection.")
+                        self.updatePlots()
+                        self.pca_selector.clear()
 
         elif event.key() == Qt.Key.Key_B and self.state == 'analysis':
             if self.undo_stack:
@@ -188,7 +199,7 @@ class spikesorter(QMainWindow):
         self.plot_widget.setMouseEnabled(x=True, y=True)
         self.plot_widget.showGrid(x=True, y=True)
 
-# Add crosshair
+        # Add crosshair
         self.vLine = pg.InfiniteLine(angle=90, movable=False, pen='w')
         self.hLine = pg.InfiniteLine(angle=0, movable=False, pen='w')
         self.plot_widget.addItem(self.vLine, ignoreBounds=True)
@@ -227,8 +238,6 @@ class spikesorter(QMainWindow):
         self.pca_plot = pg.PlotWidget(title="PCA Placeholder")
         self.pca_plot.setMouseEnabled(x=False, y=False)
         self.pca_plot.plotItem.setMenuEnabled(False)
-        self.pca_roi = pg.RectROI([0, 0], [1, 1], pen='r')
-        self.pca_plot.addItem(self.pca_roi)
         self.pca_plot.scene().sigMouseClicked.connect(self.mouseClicked)
         self.layout.addWidget(self.pca_plot, 1, 0)
 
@@ -268,19 +277,33 @@ class spikesorter(QMainWindow):
         self.spikes_plot.setLabel('left', 'Voltage')
 
     def plotPcaPlaceholder(self):
-        # PCA placeholder
         self.pca_data = PCA(n_components=2).fit_transform(
             self.snippets[self.filtered_mask])
         self.pca_plot.clear()
-        self.pca_plot.plot(self.pca_data, pen=None, symbol='o')
+
+        self.pca_points = pg.ScatterPlotItem(
+            x=self.pca_data[:, 0],
+            y=self.pca_data[:, 1],
+            pen=None,
+            brush=(100, 100, 255, 100),
+            size=5
+        )
+        self.pca_plot.addItem(self.pca_points)
         self.pca_plot.setLabel('bottom', 'PC1')
         self.pca_plot.setLabel('left', 'PC2')
+
+        self.pca_selector = PCARubberbandSelector(
+            pca_plot=self.pca_plot,
+            pca_data=self.pca_data,
+            on_selection_changed=self.updatePcaSelectionDisplay
+        )
 
     def plotIsi(self):
         valid_peaks = np.array(self.valid_peaks)
         if len(valid_peaks) > 1:
             isis = np.diff(valid_peaks) / self.fs * 1000  # in ms
             y, xedges = np.histogram(isis, bins=50, range=(0, 100))
+            self.isi_plot.clear()
             self.isi_plot.plot(
                 xedges,
                 y,
@@ -290,6 +313,13 @@ class spikesorter(QMainWindow):
             )
             self.isi_plot.setLabel('bottom', 'ISI (ms)')
             self.isi_plot.setLabel('left', 'Count')
+
+    def updatePcaSelectionDisplay(self, mask):
+        brushes = [
+            pg.mkBrush(255, 0, 0, 180) if selected else pg.mkBrush(100, 100, 255, 100)
+            for selected in mask
+        ]
+        self.pca_points.setBrush(brushes)
 
     def __filter_trace(self, data):
         self.fs = 25000
