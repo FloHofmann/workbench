@@ -3,14 +3,13 @@ import numpy as np
 from scipy.signal import find_peaks
 import sys
 from pathlib import Path
-from PyQt6.QtWidgets import QMainWindow, QWidget, QGridLayout
+from PyQt6.QtWidgets import QMainWindow, QWidget, QGridLayout, QRubberBand
 from PyQt6.QtCore import Qt
 import pyqtgraph as pg
 from typing import Union
 from scipy.signal import firwin, filtfilt, find_peaks
 from sklearn.decomposition import PCA
 
-from workbench.data.sorterhelp import PCARubberbandSelector
 
 PathLike = Union[str, Path]
 
@@ -116,13 +115,13 @@ class spikesorter(QMainWindow):
             self.removeThroughRoi()
 
         elif event.key() == Qt.Key.Key_E and self.state == 'analysis':
-                    if hasattr(self, 'pca_selector'):
-                        mask = self.pca_selector.get_mask()
-                        self.undo_stack.append(self.filtered_mask.copy())
-                        self.filtered_mask &= ~mask
-                        print(f"Removed {np.sum(mask)} spikes via PCA selection.")
-                        self.updatePlots()
-                        self.pca_selector.clear()
+            if hasattr(self, 'pca_selector'):
+                mask = self.pca_selector.get_mask()
+                self.undo_stack.append(self.filtered_mask.copy())
+                self.filtered_mask &= ~mask
+                print(f"Removed {np.sum(mask)} spikes via PCA selection.")
+                self.updatePlots()
+                self.pca_selector.clear()
 
         elif event.key() == Qt.Key.Key_B and self.state == 'analysis':
             if self.undo_stack:
@@ -292,12 +291,6 @@ class spikesorter(QMainWindow):
         self.pca_plot.setLabel('bottom', 'PC1')
         self.pca_plot.setLabel('left', 'PC2')
 
-        self.pca_selector = PCARubberbandSelector(
-            pca_plot=self.pca_plot,
-            pca_data=self.pca_data,
-            on_selection_changed=self.updatePcaSelectionDisplay
-        )
-
     def plotIsi(self):
         valid_peaks = np.array(self.valid_peaks)
         if len(valid_peaks) > 1:
@@ -316,7 +309,8 @@ class spikesorter(QMainWindow):
 
     def updatePcaSelectionDisplay(self, mask):
         brushes = [
-            pg.mkBrush(255, 0, 0, 180) if selected else pg.mkBrush(100, 100, 255, 100)
+            pg.mkBrush(255, 0, 0, 180) if selected else pg.mkBrush(
+                100, 100, 255, 100)
             for selected in mask
         ]
         self.pca_points.setBrush(brushes)
