@@ -6,7 +6,7 @@ import re
 from typing import Union
 from pathlib import Path
 
-from workbench.data.spikesorter import spikesorter
+from workbench.data.spikesorter import SpikeSorter
 
 
 class loadmat:
@@ -91,7 +91,7 @@ class loadmat:
         # file.
         # tbd.... this will be saved in the same folder as the raw_data h5file
         app = QApplication(sys.argv)
-        window = spikesorter(self)
+        window = SpikeSorter(self)
         window.show()
         sys.exit(app.exec())
 
