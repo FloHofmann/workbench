@@ -97,5 +97,9 @@ class loadmat:
         return window
 
 
+def save_processed_data(folderpath, sorted_spikes, angles, nframes, x_values, y_value):
+    print('data saved')
+
+
 if __name__ == '__main__':
     print("not supposed to run as main")

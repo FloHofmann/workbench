@@ -1,15 +1,33 @@
-from workbench.data.spikesorter import SpikeSorter
-from workbench.data.hdf5_interface import loadmat
-
-import h5py
 from pathlib import Path
+from workbench.videography.camera_process import track_platform
+from workbench.data.hdf5_interface import loadmat, save_processed_data
 
 
-def process_exp(datapath: Path):
+def process_exp(folderpath, *args):
+    """
+    input path to start processing of an experiment
+    requires path to exported .mat file from .smrx
+    entry is a sqlite row from the database. it provides
+    the function with recording information and path to
+    various data sources.
+    inputting args tracking: true will search for a baseline
+    video and extract the rotational data for the platform
+    """
+    datapath = sorted(Path(folderpath).glob('Data*.mat'))[0]
+    # load raw data
     data = loadmat(datapath)
-    data.export_processed_data()
-    sorted = SpikeSorter(trace)
+    # initialize the spikesorting
+    sorted_spikes = data.export_processed_data()
+    # retrieve spikesorted data from spikesorter
+    exp = sorted_spikes.exportData()
+
+    if 'tracking' in args:
+        # ToDo videopath needs to be computed first
+        videopath = sorted(Path(folderpath).glob('FH*.avi'))[0]
+        angles, nframes, x_values, y_values = track_platform(videopath)
+
+    save_processed_data(folderpath, exp, angles, nframes, x_values, y_values)
 
 
 if __name__ == "__main__":
-    process_exp()
+    print('running processing as main')
