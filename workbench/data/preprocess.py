@@ -19,14 +19,14 @@ def process_exp(folderpath, *args):
     # initialize the spikesorting
     sorted_spikes = data.export_processed_data()
     # retrieve spikesorted data from spikesorter
-    exp = sorted_spikes.exportData()
+    spikesorted = sorted_spikes.exportData()
 
     if 'tracking' in args:
         # ToDo videopath needs to be computed first
         videopath = sorted(Path(folderpath).glob('FH*.avi'))[0]
         angles, nframes, x_values, y_values = track_platform(videopath)
 
-    save_processed_data(folderpath, exp, angles, nframes, x_values, y_values)
+    save_processed_data(folderpath, spikesorted, angles, nframes, x_values, y_values)
 
 
 if __name__ == "__main__":
