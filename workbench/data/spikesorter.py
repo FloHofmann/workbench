@@ -73,6 +73,11 @@ class PcaRubberbandSelector(QObject):
 
 
 class SpikeSorter(QMainWindow):
+    """
+    initialize the class with a numpy array of the trace.
+    This class is used to sort the raw voltage trace for spikes
+    """
+
     def __init__(self, *args):
         super().__init__()
         self.fs = 25000
@@ -143,6 +148,7 @@ class SpikeSorter(QMainWindow):
                 snippets.append(self.trace[p - pre: p + post + 1])
                 self.valid_peaks.append(p)
 
+        self.valid_peaks = np.array(self.valid_peaks)
         self.snippets = np.array(snippets)
         self.time_vector = np.linspace(-0.5, 1.5, self.snippets.shape[1])
         self.filtered_mask = np.ones(self.snippets.shape[0], dtype=bool)
@@ -209,7 +215,7 @@ class SpikeSorter(QMainWindow):
         self.pca_plot.setLabel('left', 'PC2')
 
     def plotIsi(self):
-        peaks = np.array(self.valid_peaks)
+        peaks = self.valid_peaks[self.filtered_mask]
         if len(peaks) > 1:
             isis = np.diff(peaks) / self.fs * 1000
             y, xedges = np.histogram(isis, bins=50, range=(0, 100))
@@ -294,6 +300,16 @@ class SpikeSorter(QMainWindow):
     def saveStoredData(self):
         print('save stored data')
         self.close()
+
+    def exportData(self):
+        print('data exported')
+        export = {
+            'spiketimes': self.valid_peaks[self.filtered_mask]/self.fs,
+            'traces': self.snippets[self.filtered_mask],
+            'spiketimes_all': self.valid_peaks / self.fs,
+            'traces_all': self.snippets,
+        }
+        return export
 
     def _clearLayout(self):
         for i in reversed(range(self.layout.count())):
