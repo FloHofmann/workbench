@@ -11,8 +11,6 @@ class loadmat:
         """
         self.info = {}
         self.raw_data = {}
-        self.processed_data = {}
-        self.waveform = {}
 
         if isinstance(path, str):
             path = Path(path)
@@ -87,7 +85,7 @@ def save_processed_data(
         processed = f.create_group("processed_data")
         analysis = f.create_group("analysis")
 
-        # === Infos ===
+        #  Infos
         if nframes is not None:
             infos.create_dataset("nframes", data=nframes)
         if x_values is not None:
@@ -103,17 +101,20 @@ def save_processed_data(
         infos.attrs["has_events"] = event_times is not None
         infos.attrs["has_tracking"] = angles is not None
 
-        # === Processed ===
+        #  Processed
         if sorted_spikes is not None:
             if "times" in sorted_spikes:
-                processed.create_dataset("spike_times", data=np.asarray(sorted_spikes["times"]))
+                processed.create_dataset(
+                    "spike_times", data=np.asarray(sorted_spikes["times"]))
             if "traces" in sorted_spikes:
-                processed.create_dataset("spike_traces", data=np.asarray(sorted_spikes["traces"]))
+                processed.create_dataset(
+                    "spike_traces", data=np.asarray(sorted_spikes["traces"]))
 
         if event_times is not None:
-            processed.create_dataset("event_times", data=np.asarray(event_times))
+            processed.create_dataset(
+                "event_times", data=np.asarray(event_times))
 
-        # === Analysis ===
+        #  Analysis
         if angles is not None:
             analysis.create_dataset("angles", data=np.asarray(angles))
 
@@ -130,10 +131,12 @@ def load_processed_data(file_path):
         }
 
         infos = f["infos"]
-        keys = ["nframes", "x_values", "y_value", "raw_data_path", "sampling_rate"]
+        keys = ["nframes", "x_values", "y_value",
+                "raw_data_path", "sampling_rate"]
         for key in keys:
             if key in infos:
-                data["infos"][key] = infos[key][()] if infos[key].shape == () else infos[key][:]
+                data["infos"][key] = infos[key][(
+                )] if infos[key].shape == () else infos[key][:]
 
         data["infos"].update({
             "has_spikes": infos.attrs.get("has_spikes", False),
@@ -154,6 +157,7 @@ def load_processed_data(file_path):
             data["analysis"]["angles"] = analysis["angles"][:]
 
     return data
+
 
 if __name__ == '__main__':
     print("not supposed to run as main")
