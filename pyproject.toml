@@ -9,6 +9,7 @@ dependencies = [
     "gitpython>=3.1.44",
     "h5df>=0.1.5",
     "jupyter>=1.1.1",
+    "keyboard>=0.13.5",
     "matplotlib>=3.10.3",
     "numpy>=2.3.0",
     "opencv-python>=4.11.0.86",
@@ -17,9 +18,11 @@ dependencies = [
     "polars>=1.30.0",
     "pyqt6>=6.9.1",
     "pyqtgraph>=0.13.7",
+    "pyserial>=3.5",
     "scikit-learn>=1.7.0",
     "scipy>=1.15.3",
     "seaborn>=0.13.2",
+    "serial>=0.0.97",
 ]
 
 
