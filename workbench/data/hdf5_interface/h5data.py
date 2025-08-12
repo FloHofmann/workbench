@@ -22,9 +22,10 @@ class loadmat:
                 if 'ch1' in k:
                     self.raw_data[key] = self._assign_signal(f, key)
                 elif k in ['ch31', 'ch32']:
-                    self.raw_data['codes'] = f[key]['codes'][...]
-                    self.raw_data['times'] = f[key]['times'][...]
-                    self.raw_data['title'] = ''.join(
+                    self.raw_data[key] = dict()
+                    self.raw_data[key]['codes'] = f[key]['codes'][...]
+                    self.raw_data[key]['times'] = f[key]['times'][...]
+                    self.raw_data[key]['title'] = ''.join(
                         f[key]['title'][:].astype('uint32').view('U1').flatten())
                 elif any(c in k for c in ['ch2', 'ch3', 'ch4', 'ch5', 'ch6']):
                     self.raw_data[key] = self._assign_signal(f, key)
@@ -58,7 +59,7 @@ class loadmat:
         window.show()
         app.exec()
 
-        return window
+        return self.info, self.raw_data, window
 
 
 def save_processed_data(
@@ -69,6 +70,8 @@ def save_processed_data(
     nframes=None,
     x_values=None,
     y_value=None,
+    n_ttls=None,
+    ttl_times=None,
     event_times=None,
     raw_path=None,
     sampling_rate=None
@@ -88,6 +91,10 @@ def save_processed_data(
         #  Infos
         if nframes is not None:
             infos.create_dataset("nframes", data=nframes)
+        if ttl_times is not None:
+            infos.create_dataset("ttl_times", data=np.asarray(ttl_times))
+        if n_ttls is not None:
+            infos.create_dataset("n_ttls", data=n_ttls)
         if x_values is not None:
             infos.create_dataset("x_values", data=np.asarray(x_values))
         if y_value is not None:
@@ -131,9 +138,9 @@ def load_processed_data(file_path):
         }
 
         infos = f["infos"]
-        keys = ["nframes", "x_values", "y_value",
-                "raw_data_path", "sampling_rate"]
-        for key in keys:
+        data_fields = ["nframes", "x_values", "y_value",
+                       "raw_data_path", "sampling_rate"]
+        for key in data_fields:
             if key in infos:
                 data["infos"][key] = infos[key][(
                 )] if infos[key].shape == () else infos[key][:]
