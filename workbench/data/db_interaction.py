@@ -30,9 +30,8 @@ def createFolderStructure(conn: sqlite3.Connection,
         """
 
     df = pd.read_sql_query(query, conn)
-    if df.emtpy():
+    if df.empty:
         print("=================All Folders already exist=================")
-        conn.close()
         return
 
     processed_keys = set()  # (Animal_Id, Cell_Id)

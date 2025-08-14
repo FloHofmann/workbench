@@ -98,9 +98,10 @@ class SpikeSorter(QMainWindow):
         CUTOFF = 300
         N = 2 ** 8 | 1
         filterb = firwin(N, CUTOFF, fs=self.fs, pass_zero=False)
+        ch1_key = list(data.raw_data.keys())[0]
         self.trace = filtfilt(
-            filterb, 1, data.raw_data['Ch1']['values'], axis=0)
-        self.t = data.raw_data['Ch1']['times'][0]
+            filterb, 1, data.raw_data[ch1_key]['values'], axis=0)
+        self.t = data.raw_data[ch1_key]['times'][0]
 
     def setupThresholdingView(self):
         self.state = 'threshold'
@@ -298,11 +299,9 @@ class SpikeSorter(QMainWindow):
             self.saveStoredData()
 
     def saveStoredData(self):
-        print('save stored data')
         self.close()
 
     def exportData(self):
-        print('data exported')
         export = {
             'spiketimes': self.valid_peaks[self.filtered_mask]/self.fs,
             'traces': self.snippets[self.filtered_mask],

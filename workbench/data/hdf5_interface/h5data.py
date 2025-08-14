@@ -19,9 +19,14 @@ class loadmat:
         with h5py.File(path, "r") as f:
             for key in f.keys():
                 k = key.lower()
-                if 'ch1' in k:
+                if "_" in k:
+                    keysplit = k.split("_")
+                    keysplit = keysplit[-1]
+                else:
+                    keysplit = k
+                if 'ch1' in keysplit:
                     self.raw_data[key] = self._assign_signal(f, key)
-                elif k in ['ch31', 'ch32']:
+                elif keysplit in ['ch31', 'ch32']:
                     self.raw_data[key] = dict()
                     self.raw_data[key]['codes'] = f[key]['codes'][...]
                     self.raw_data[key]['times'] = f[key]['times'][...]
@@ -73,8 +78,10 @@ def save_processed_data(
     n_ttls=None,
     ttl_times=None,
     event_times=None,
-    raw_path=None,
-    sampling_rate=None
+    event_codes=None,
+    sampling_rate=None,
+    ch4_stims=None,
+    ch5_stims=None
 ):
     """
     Saves processed spike/event/tracking data into a structured HDF5 file.
@@ -82,6 +89,7 @@ def save_processed_data(
     folderpath = Path(folderpath)
     folderpath.mkdir(parents=True, exist_ok=True)
     file_path = folderpath / "exp_data.h5"
+    print(str(file_path))
 
     with h5py.File(file_path, "w") as f:
         infos = f.create_group("infos")
@@ -91,18 +99,10 @@ def save_processed_data(
         #  Infos
         if nframes is not None:
             infos.create_dataset("nframes", data=nframes)
-        if ttl_times is not None:
-            infos.create_dataset("ttl_times", data=np.asarray(ttl_times))
-        if n_ttls is not None:
-            infos.create_dataset("n_ttls", data=n_ttls)
-        if x_values is not None:
-            infos.create_dataset("x_values", data=np.asarray(x_values))
-        if y_value is not None:
-            infos.create_dataset("y_value", data=np.asarray(y_value))
-        if raw_path is not None:
-            infos.create_dataset("raw_data_path", data=str(raw_path))
         if sampling_rate is not None:
             infos.create_dataset("sampling_rate", data=sampling_rate)
+        else:
+            infos.create_dataset("sampling_rate", data=25000)
 
         infos.attrs["has_spikes"] = sorted_spikes is not None
         infos.attrs["has_events"] = event_times is not None
@@ -117,53 +117,67 @@ def save_processed_data(
                 processed.create_dataset(
                     "spike_traces", data=np.asarray(sorted_spikes["traces"]))
 
+        if ch4_stims is not None:
+            processed.create_dataset("ch4_stims", data=np.asarray(ch4_stims))
+        if ch5_stims is not None:
+            processed.create_dataset("ch5_stims", data=np.asarray(ch5_stims))
+
         if event_times is not None:
             processed.create_dataset(
                 "event_times", data=np.asarray(event_times))
+
+        if event_codes is not None:
+            processed.create_dataset(
+                "event_codes", data=event_codes)
 
         #  Analysis
         if angles is not None:
             analysis.create_dataset("angles", data=np.asarray(angles))
 
+        if ttl_times is not None:
+            analysis.create_dataset("ttl_times", data=np.asarray(ttl_times))
+        if n_ttls is not None:
+            analysis.create_dataset("n_ttls", data=n_ttls)
+        if x_values is not None:
+            analysis.create_dataset("x_values", data=np.asarray(x_values))
+        if y_value is not None:
+            analysis.create_dataset("y_value", data=np.asarray(y_value))
+
 
 def load_processed_data(file_path):
     """
-    Loads processed spike/event/tracking data from an HDF5 file.
+    Loads data saved by `save_processed_data`.
+
+    Returns:
+        dict: {
+            'infos': dict,
+            'processed_data': dict,
+            'analysis': dict
+        }
     """
+    file_path = Path(file_path)
+    if not file_path.exists():
+        raise FileNotFoundError(f"{file_path} does not exist")
+
     with h5py.File(file_path, "r") as f:
-        data = {
-            "infos": {},
-            "processed_data": {},
-            "analysis": {}
+        infos = {key: f["infos"][key][()] for key in f["infos"]}
+        infos.update({k: f["infos"].attrs[k] for k in f["infos"].attrs})
+
+        processed = {
+            key: f["processed_data"][key][()]
+            for key in f.get("processed_data", {})
         }
 
-        infos = f["infos"]
-        data_fields = ["nframes", "x_values", "y_value",
-                       "raw_data_path", "sampling_rate"]
-        for key in data_fields:
-            if key in infos:
-                data["infos"][key] = infos[key][(
-                )] if infos[key].shape == () else infos[key][:]
+        analysis = {
+            key: f["analysis"][key][()]
+            for key in f.get("analysis", {})
+        }
 
-        data["infos"].update({
-            "has_spikes": infos.attrs.get("has_spikes", False),
-            "has_events": infos.attrs.get("has_events", False),
-            "has_tracking": infos.attrs.get("has_tracking", False)
-        })
-
-        processed = f["processed_data"]
-        if "spike_times" in processed:
-            data["processed_data"]["spike_times"] = processed["spike_times"][:]
-        if "spike_traces" in processed:
-            data["processed_data"]["spike_traces"] = processed["spike_traces"][:]
-        if "event_times" in processed:
-            data["processed_data"]["event_times"] = processed["event_times"][:]
-
-        analysis = f["analysis"]
-        if "angles" in analysis:
-            data["analysis"]["angles"] = analysis["angles"][:]
-
-    return data
+    return {
+        "infos": infos,
+        "processed_data": processed,
+        "analysis": analysis
+    }
 
 
 if __name__ == '__main__':
