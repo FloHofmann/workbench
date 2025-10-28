@@ -8,6 +8,10 @@ __pycache__/
 *.avi
 *.mkv
 
+*.jpg
+*.pdf
+*.png
+
 # Distribution / packaging
 .Python
 build/
