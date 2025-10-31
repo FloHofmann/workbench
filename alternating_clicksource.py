@@ -29,7 +29,7 @@ if __name__ == '__main__':
     keyset_entries = KEYSET.keys()
     keylist = sum([random.sample(list(keyset_entries), 4)
                   for _ in range(REPS)], [])
-
+    print(keylist)
     ARDUINO_PORT = find_arduino_port()
     if ARDUINO_PORT is None:
         print("No Arduino found\n quitting the script")
@@ -44,6 +44,7 @@ if __name__ == '__main__':
         # here follows the logic to send the bytes
         for idx, key in enumerate(keylist):
             # writes the number associated with the key as byte through the serial port
+            print("Sending key {} to Arduino".format(KEYSET[key]))
             ser.write(bytes([KEYSET[key]]))
             time.sleep(ISI+random.randint(30, 90)/60)
             keyboard.press(key)

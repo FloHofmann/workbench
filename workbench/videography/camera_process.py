@@ -88,6 +88,6 @@ if __name__ == '__main__':
     import matplotlib.pyplot as plt
     from pathlib import Path
     angles, frames, _, _ = track_platform(Path(
-        r"\\172.25.250.112\burgalossi\lab share\Data\Florian\Behavior\RH13\data\FH0001 24-10-17 10-20-35.avi"))
+        r"\\172.25.250.112\burgalossi\lab share\Data\Florian\ADN\direction check_clockwise_frontleft_to_frontright.avi"))
     plt.plot(angles, c='r')
     plt.show()
