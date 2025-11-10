@@ -180,5 +180,20 @@ def load_processed_data(file_path):
     }
 
 
+def combTableCreate(datatable, datapath, filename):
+    """
+    Creates the comb tables and saves them as h5 files to the datapath folder under the specified filename
+    Input is a pandas dataframe loaded from sqlite
+    """
+    return 'Hi'
+
+
+def parseComb():
+    """
+    This function is used to parse the saved h5 file back to a usable dict
+    """
+    return 'Hi'
+
+
 if __name__ == '__main__':
     print("not supposed to run as main")

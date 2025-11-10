@@ -140,13 +140,14 @@ def batch_process():
 
     conn.close()
 
+
 def TriggRasterPY(
-            tone_triggers,
-            spkT,
-            SR=25000,
-            halftime = 0.6,
-            nbins = 100
-    )
+    tone_triggers,
+    spkT,
+    SR=25000,
+    halftime=0.6,
+    nbins=100
+):
     """
     This is a replica of the TriggRaster.m function.
     It does not implement the shuffling procedure, so far no need for it.
@@ -160,7 +161,8 @@ def TriggRasterPY(
     chunks = np.zeros((len(tone_triggers), (halfsamples*2)+1))
 
     for idx, ttrig in enumerate(tone_triggers):
-        c = np.linspace(ttrig-halfsamples, ttrig+halfsamples, (halfsamples*2)+1, dtype=int)
+        c = np.linspace(ttrig-halfsamples, ttrig+halfsamples,
+                        (halfsamples*2)+1, dtype=int)
         isCell = np.isin(c, spkT_samples)
         chunks[idx, :] = isCell
 
@@ -174,24 +176,24 @@ def TriggRasterPY(
     counts, edges = np.histogram(cols, bins=edges)
 
     # mimic the medfilt1
-    edges2plot = np.concatenate([[edges[0]], np.median(np.vstack([edges[:-1], edges[1:]]), axis=0)])
+    edges2plot = np.concatenate([[edges[0]], np.median(
+        np.vstack([edges[:-1], edges[1:]]), axis=0)])
     edges2plot = edges2plot[1::]
     time2scale = np.round(
-    np.median(np.diff(timechunk[np.round(edges2plot).astype(int)])),
+        np.median(np.diff(timechunk[np.round(edges2plot).astype(int)])),
         4)
     ntrial_timebin = len(tone_triggers)*time2scale
 
     # estimation of firing rate
     rate = np.divide(counts, ntrial_timebin)
     raster = {
-        'raster_times':timechunk[cols]*1000,
-        'raster_row':rows,
-        'raster_rate':rate,
-        'time':np.round(timechunk[np.round(edges2plot).astype(int)]*1000),
-        'time_bin':time2scale*1000
+        'raster_times': timechunk[cols]*1000,
+        'raster_row': rows,
+        'raster_rate': rate,
+        'time': np.round(timechunk[np.round(edges2plot).astype(int)]*1000),
+        'time_bin': time2scale*1000
     }
     return raster
-
 
 
 if __name__ == "__main__":
