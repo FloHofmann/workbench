@@ -209,11 +209,14 @@ def combTableCreate(datatable, datapath, filename):
     import tables as tb
     import polars as pl
     COLS = ["Animal_Id", "Cell_Id", "Condition", "exp_type", "Folderpath"]
-    datatable = pl.from_pandas(datatable[[COLS]])
+    datatable = pl.from_pandas(datatable[COLS])
+    comb_table = []
 
     for row in datatable.iter_rows(named=True):
+        row_result = processTableRow(row)
+        comb_table.append(row_result)
 
-        processed_row = processTableRow(row)
+    return comb_table
 
 
 def processTableRow(
@@ -422,10 +425,6 @@ def processTableRow(
                 # exp_info = exp.get('info', None)
                 # analysis = exp.get('analysis', None)
 
-            if 'spike_sorting_data' not in processed_data:
-                KeyError(format('Cell_id {} processed_data empty',
-                         cell_id))
-
             # processing
             # spike times
             spkT = processed_data['spike_sorting_data']['spike_times']
@@ -566,8 +565,7 @@ def processTableRow(
             pupil_avg[tone] = np.nanmean(pupil_chunks, axis=0)
             whisk_avg[tone] = np.nanmean(whisk_chunks, axis=0)
 
-        
-        processed_row['trigger_time'] = trigger_time[0]
+        processed_row['trigger_time'] = trigger_time
         processed_row['pupil_psth'] = pupil_psth
         processed_row['whisk_psth'] = whisk_psth
         processed_row['pupil_avg'] = pupil_avg
