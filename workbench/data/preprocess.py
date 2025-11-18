@@ -206,7 +206,6 @@ def combTableCreate(datatable, datapath, filename):
     Datapath is the path to where the final table is supposed to be saved to.
     Filename is the name of the final table
     """
-    import tables as tb
     import polars as pl
     COLS = ["Animal_Id", "Cell_Id", "Condition", "exp_type", "Folderpath"]
     datatable = pl.from_pandas(datatable[COLS])
@@ -576,6 +575,59 @@ def processTableRow(
         return
 
     return processed_row
+
+
+def expand_dict_columns(df: pd.DataFrame,
+                        dict_columns,
+                        flatten_2d: bool = False,
+                        sep: str = "_") -> pd.DataFrame:
+    """
+    For each column name in `dict_columns`, assume cells are either:
+      - dicts with keys like 'a','w','e','r', each value being a 1D or 2D array
+      - or None/NaN.
+
+    Creates new columns <col><sep><key> with:
+      - 1D arrays -> Python list
+      - 2D arrays -> list-of-lists (or flattened list if flatten_2d=True)
+
+    Drops the original dict column.
+    """
+    df = df.copy()
+
+    for col in dict_columns:
+        s = df[col]  # this is a Series
+
+        # collect all subkeys actually present
+        keys = set()
+        for v in s:
+            if isinstance(v, dict):
+                keys.update(v.keys())
+
+        for subkey in sorted(keys):
+            new_col = f"{col}{sep}{subkey}"
+
+            def transform(cell, sk=subkey):
+                if not isinstance(cell, dict):
+                    return None
+                if sk not in cell:
+                    return None
+
+                arr = np.asarray(cell[sk])
+
+                if arr.ndim == 1:
+                    return arr.tolist()              # list
+                elif arr.ndim == 2:
+                    return arr.ravel().tolist() if flatten_2d else arr.tolist()
+                else:
+                    # fallback: flatten higher dims
+                    return arr.reshape(-1).tolist()
+
+            df[new_col] = s.apply(transform)
+
+        # drop original dict column
+        df = df.drop(columns=[col])
+
+    return df
 
 
 def calc_spikewidth_from_traces(
