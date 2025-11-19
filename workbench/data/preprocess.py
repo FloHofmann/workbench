@@ -374,11 +374,13 @@ def processTableRow(
         tone_onset = None
         pupil_psth = None
         whisk_psth = None
+        eye_psth = None
         RasterTimes = dict()
         RasterRows = dict()
         RasterRate = dict()
         whisk_avg = dict()
         pupil_avg = dict()
+        eye_avg = dict()
         trigger_time = None
         processed_row = dict()
         processed_row['Animal_Id'] = animal_id
@@ -492,6 +494,7 @@ def processTableRow(
             Warning(stri)
 
         whisk_motion = pout['motion']
+        eyelid = pout['blink']
 
         # remove artifacts in motion
         max_min = np.max(whisk_motion) - np.min(whisk_motion)
@@ -520,10 +523,14 @@ def processTableRow(
             return (x - x.min()) / (x.max() - x.min())
 
         pupil_area = normalize(pupil_area)
+        eyelid = smooth(eyelid, 10)
+        b, a = butter(3, [1/(pupil_sr/2)], btype='high')
+        eyelid = filtfilt(b,a, eyelid)
         whisk_motion = normalize(whisk_motion)
 
         pupil_psth = dict()
         whisk_psth = dict()
+        eye_psth = dict()
         for idx, tone in enumerate(tone_letters):
             this_code = ord(tone)
             this_codes = np.flatnonzero(this_code == tone_codes)
@@ -536,6 +543,7 @@ def processTableRow(
 
             pupil_chunks = np.zeros((len(tone_triggers), mot_samples))
             whisk_chunks = np.zeros((len(tone_triggers), mot_samples))
+            eyelid_chunks = np.zeros((len(tone_triggers), mot_samples))
 
             # loop across stimuli
             for jdx, tt in enumerate(tone_triggers):
@@ -554,6 +562,7 @@ def processTableRow(
                     continue
                 pupil_chunks[jdx, :] = pupil_area[my_window]
                 whisk_chunks[jdx, :] = whisk_motion[my_window]
+                eyelid_chunks[jdx, :] = eyelid[my_window]
 
             # motion trigger time
             trigger_time = np.linspace(-halftime_mot,
@@ -561,14 +570,18 @@ def processTableRow(
 
             pupil_psth[tone] = pupil_chunks
             whisk_psth[tone] = whisk_chunks
+            eye_psth[tone] = eyelid_chunks
             pupil_avg[tone] = np.nanmean(pupil_chunks, axis=0)
             whisk_avg[tone] = np.nanmean(whisk_chunks, axis=0)
+            eye_avg[tone] = np.nanmean(eyelid_chunks, axis=0)
 
         processed_row['trigger_time'] = trigger_time
         processed_row['pupil_psth'] = pupil_psth
         processed_row['whisk_psth'] = whisk_psth
+        processed_row['eye_psth'] = eye_psth
         processed_row['pupil_avg'] = pupil_avg
         processed_row['whisk_avg'] = whisk_avg
+        processed_row['eye_avg'] = eye_avg
 
     else:
         Warning(f"Unknown Condition {condition}")
