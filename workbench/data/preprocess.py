@@ -89,6 +89,16 @@ def process_exp(folderpath, *args):
 
 
 def correct_keyboard_times(channel: dict, keyboard_times):
+    """
+    Docstring for correct_keyboard_times
+    
+    :param channel: A signal channel from loading the .mat file exported from spike 2.
+        The channel is used to receive the signal from the sound generation fed back into the machine.
+        Has to have a key 'values' which stores the signal at 25 kHz sampling rate.
+    :type channel: dict
+    :param keyboard_times: This is a list storing the spike 2 set times at which the keyboard press happenend.
+        This is inherently inaccurate and not stable. The values need to be in seconds.
+    """
     from scipy.signal import find_peaks
 
     pks, _ = find_peaks(np.abs(np.diff(channel['values'])), height=0.04)

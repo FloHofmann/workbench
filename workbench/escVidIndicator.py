@@ -8,7 +8,6 @@ from tkinter import Tk
 from tkinter.filedialog import askdirectory
 from scipy.io import loadmat
 from IPython import embed
-import scipy
 
 
 def mark_vid(
@@ -40,7 +39,7 @@ def mark_vid(
     if not cap.isOpened():
         raise RuntimeError("Could not open input video: %s" % vid_path)
 
-    fps = 30
+    fps = 25
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -132,12 +131,12 @@ def mark_video_selection():
     csv = pl.read_csv(csv_path, has_header=True,
                       truncate_ragged_lines=True, separator=';')
     mat_list = list(path.glob('*.mat'))
-    mat_names = [i.stem for i in mat_list]
+    mat_names = [i.stem.strip() for i in mat_list]
 
     mat_map = {p.stem: str(p) for p in mat_list}
     vid_list = [p for p in path.glob(
         '*.mp4') if not p.stem.endswith('_marked')]
-    vid_names = [str(i.stem[:6]) for i in vid_list]
+    vid_names = [str(i.stem[:6]).strip() for i in vid_list]
 
     vid_map = {}
     for p in vid_list:
@@ -174,7 +173,7 @@ def mark_video_selection():
     )
 
     filt_csv = csv_with_paths.filter(
-        pl.col(cols[0]).is_in(mat_names)
+        pl.col(cols[1]).is_in(mat_names)
     )
 
     for mat_p, vid_p in zip(filt_csv['mat_path'], filt_csv['vid_path']):
@@ -182,16 +181,33 @@ def mark_video_selection():
         print(Path(mat_p).stem)
         mat = h5data.loadmat(mat_p)
         keyboard_channel = mat.raw_data['Ch31']
+        sound_channel = mat.raw_data['Ch5']
+        click_channel = mat.raw_data['Ch4']
         ttl_channel = mat.raw_data['Ch3']['values']
         diffs = np.diff(ttl_channel[:])
         pks = find_peaks(diffs, height=4)
         print(f"{len(pks[0])} TTLs were given")
-        times = keyboard_channel['times'][0]  # keyboard times/stimulus times
 
+        # split the keyboards pressed and their times for keyboard correction
+        handlers = {
+            'w': {'config': click_channel},
+            'a': {'config': sound_channel},
+            'e': {'config': click_channel}
+        }
+        times = keyboard_channel['times'][0]
         vid_duration = times[-1] - times[0]
         pre_time = times[0]
+        times = times[1:-1]  # keyboard times/stimulus times
+        codes = list(''.join(map(chr, keyboard_channel['codes'][0])))
+        codes = codes[1:-1]
+
+        result = np.array([
+            correct_keyboard_times(handlers[l]['config'], [v])
+            for v, l in zip(times, codes)
+        ])
+
         # korregieren der stimulus time
-        times = np.array(times[1:-1] - pre_time, dtype=float)
+        times = result - pre_time
 
         vid_folder = Path(vid_p).parent
         prefix = Path(vid_p).stem[:6]
