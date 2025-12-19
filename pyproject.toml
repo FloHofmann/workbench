@@ -17,6 +17,7 @@ dependencies = [
     "jupyter-bokeh>=4.0.5",
     "keyboard>=0.13.5",
     "matplotlib>=3.10.3",
+    "maturin>=1.10.2",
     "numpy>=2.3.0",
     "opencv-python>=4.11.0.86",
     "pandas>=2.3.0",
