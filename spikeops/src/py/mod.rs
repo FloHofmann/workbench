@@ -4,5 +4,6 @@ pub mod detect;
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(detect::detect_peaks, m)?)?;
+    m.add_function(wrap_pyfunction!(detect::extract_waveforms, m)?)?;
     Ok(())
 }
