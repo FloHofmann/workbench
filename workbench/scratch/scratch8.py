@@ -46,7 +46,7 @@ ks_n = normalize(ks)
 
 ks_n = normalize(ks)
 # baseline = mean from -0.5 to -0.05 s
-baseline_mask = (t >= -0.5) & (t <= -0.05)
+baseline_mask = (t >= -0.8) & (t <= -0.1)
 baseline = jnp.mean(y[baseline_mask])
 
 y_bs = y - baseline
