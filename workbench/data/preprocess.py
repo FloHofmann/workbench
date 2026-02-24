@@ -892,22 +892,18 @@ def np_interp_strict(x_old, y_old, x_new):
 
 
 def calculate_hd_occupancy(angles_deg, num_directions, dt, smooth_angular_win):
-    """
-    Histogram of HEAD DIRECTION occupancy in degrees.
-    Returns:
-      hd_occupancy_smooth: time spent per direction bin (seconds), smoothed circularly
-      _unsmoothed (not returned here)
-      directions: bin edges in degrees, shape (num_directions+1,)
-    """
-    # bin edges [0, 360], num_directions bins
     directions = np.linspace(0, 360, num_directions + 1)
-    # histogram angles into bins
-    counts, edges = np.histogram(wrap_to_360_deg(angles_deg), bins=directions)
-    # occupancy time per bin = count * dt
+
+    ang = wrap_to_360_deg(angles_deg)  # your wrap maps 360 -> 0 which is fine
+
+    # Use MATLAB histc behavior (same helper as in calculate_hd_rate)
+    counts_full = histc_matlab(ang, directions)      # length 37
+    counts_full[0] += counts_full[-1]                # merge 360 into 0
+    counts = counts_full[:-1]                        # keep 36 bins
+
     hd_occupancy = counts.astype(float) * dt
-    # circular smoothing of occupancy across direction bins (exclude the last edge bin)
     occ_smooth = _cyclic_smoothing(hd_occupancy, smooth_angular_win)
-    return occ_smooth, hd_occupancy, edges
+    return occ_smooth, hd_occupancy, directions
 
 
 def calculate_hd_rate(video_times, spike_times, video_angles, smooth_angular_win, directions):
@@ -936,28 +932,6 @@ def calculate_hd_rate(video_times, spike_times, video_angles, smooth_angular_win
     hdOccupancySpikesUnsmooth : (K-1,) ndarray
     """
     # 1) Spike angles via linear interpolation (like interp1q)
-    def histc_matlab(values, edges):
-        """
-        Exact MATLAB histc behavior.
-        edges: array of bin edges, length K
-        Returns: counts of length K
-        """
-        values = np.asarray(values)
-        edges = np.asarray(edges)
-
-        # main bins: edges[i] ≤ x < edges[i+1]
-        counts = np.zeros(len(edges), dtype=int)
-
-        # np.digitize, right=False gives bins based on x < edges[i]
-        idx = np.digitize(values, edges, right=False)
-
-        # digitize returns 1..len(edges)
-        # values equal to edges[-1] become idx == len(edges)
-        for i in idx:
-            if 1 <= i <= len(edges):
-                counts[i-1] += 1
-
-        return counts
 
     spike_angle = np.interp(spike_times, video_times, video_angles)
 
@@ -973,25 +947,52 @@ def calculate_hd_rate(video_times, spike_times, video_angles, smooth_angular_win
 
     return hd_smooth, hd_unsmooth
 
-
-def _cyclic_smoothing(x, win):
+def histc_matlab(values, edges):
     """
-    Circular moving average with window size `win`.
-    Keeps length the same as x. If win<=1, returns x.
+    Exact MATLAB histc behavior.
+    edges: array of bin edges, length K
+    Returns: counts of length K
     """
-    win = int(win)
-    if win <= 1:
-        return x.astype(float)
+    values = np.asarray(values)
+    edges = np.asarray(edges)
 
-    kernel = np.ones(win, dtype=float) / win
+    # main bins: edges[i] ≤ x < edges[i+1]
+    counts = np.zeros(len(edges), dtype=int)
 
-    # Pad circularly so 'same-length' output is centered like MATLAB smooth
-    left = win // 2
-    right = win - 1 - left
-    xpad = np.pad(x, (left, right), mode='wrap')
+    # np.digitize, right=False gives bins based on x < edges[i]
+    idx = np.digitize(values, edges, right=False)
 
-    y = np.convolve(xpad, kernel, mode='valid')
-    return y
+    # digitize returns 1..len(edges)
+    # values equal to edges[-1] become idx == len(edges)
+    for i in idx:
+        if 1 <= i <= len(edges):
+            counts[i-1] += 1
+
+    return counts
+
+def _cyclic_smoothing(x, half_window):
+    """
+    Match MATLAB CyclicSmoothing(X, HalfWindow)
+    WindowLength = 2*HalfWindow + 1
+    """
+    x = np.asarray(x, dtype=float)
+    half_window = int(half_window)
+
+    if half_window <= 0:
+        return x.copy()
+
+    win_len = 2 * half_window + 1
+    kernel = np.ones(win_len, dtype=float) / win_len
+
+    # cyclic extension exactly like MATLAB:
+    x_ext = np.concatenate([x[-half_window:], x, x[:half_window]])
+
+    y = np.convolve(x_ext, kernel, mode="full")
+
+    # MATLAB crop: LongSmoothX(1 + 2*HalfWindow : end - 2*HalfWindow)
+    start = 2 * half_window
+    end = len(y) - 2 * half_window
+    return y[start:end]
 
 
 def average_firing_rate(spike_times):
