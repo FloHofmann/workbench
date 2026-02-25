@@ -1,6 +1,9 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Dict, List, Union, Optional
 from pathlib import Path
 import warnings
-import math
 import matplotlib.pyplot as plt
 from workbench.videography.camera_process import track_platform
 from workbench.data.h5data import loadmat, save_processed_data
@@ -8,6 +11,7 @@ from workbench.data.db_interaction import createFolderStructure, connectDb
 import pandas as pd
 import numpy as np
 import scipy.io
+import h5py
 from scipy.signal import filtfilt, butter
 
 
@@ -209,7 +213,7 @@ def TriggRasterPY(
     return raster
 
 
-def combTableCreate(datatable, datapath, filename):
+def combTableCreate(datatable):
     """
     Creates a combined table of preprocessed data.
     Input is a pandas table containing the sql database of the recordings info.
@@ -252,7 +256,7 @@ def processTableRow(
 
     # constants
     rasterBins = halftime_spikes * nbins
-    smooth_pupil_value = 15    # for smoothing pupil signal
+    smooth_pupil_value = 14    # for smoothing pupil signal
     mot_samples = halftime_mot * 2 * pupil_sr
 
     if condition.lower() == 'baseline':
@@ -481,66 +485,54 @@ def processTableRow(
             processed_row['RasterRate'] = RasterRate
 
         # Pupil Data
-        try:
-            pout = scipy.io.loadmat(
-                r"\\172.25.250.112\burgalossi\lab share\Data\Florian\ADN\FH8Soso\analysis\Data20\ramp\pupil_data.mat",
-                struct_as_record=False,
-                squeeze_me=False,
-                simplify_cells=True
-            )
-            pout = pout.get('pupil_out')
-        except Exception:
-            warn_string = "Animal {animal_id}, Cell_Id {cell_id}, Condition {condition} no pupil data".format(
-                animal_id=animal_id,
-                cell_id=cell_id,
-                condition=condition
-            )
-            Warning(warn_string)
-            # return
+        p = folderpath / "pupil_data.mat"
 
-        if 'pupil_times' not in pout:
+        pupil_out = load_mat_any(p, top_var = "pupil_out")
+
+
+        if 'pupil_times' not in pupil_out:
             stri = "No pupil times in Animal {}, Cell_Id {}, Condition {}".format(
                 animal_id, cell_id, condition)
             Warning(stri)
 
-        whisk_motion = pout['motion']
-        eyelid = pout['blink']
+        pupil_times = np.asarray(pupil_out["pupil_times"]).squeeze()
+        pupil_area = np.asarray(pupil_out["pupil_area"]).squeeze()
+        whisk_motion = np.asarray(pupil_out["motion"]).squeeze()
+        eyelid = np.asarray(pupil_out["blink"]).squeeze()
+        fs = float(np.asarray(pupil_out["sr"]).squeeze())
 
-        # remove artifacts in motion
-        max_min = np.max(whisk_motion) - np.min(whisk_motion)
-        mm_std_ratio = max_min/np.std(whisk_motion)
-
+        # artifacts in motion
+        max_min = np.nanmax(whisk_motion) - np.nanmin(whisk_motion)
+        mm_std_ratio = max_min / np.nanstd(whisk_motion)
         if mm_std_ratio > 7:
-            threshold = np.percentile(whisk_motion, 99.7)
-            whisk_motion[whisk_motion > threshold] = np.nan
+            thr = np.nanpercentile(whisk_motion, 99.7)
+            whisk_motion = whisk_motion.copy()
+            whisk_motion[whisk_motion > thr] = np.nan
 
-        def smooth(x, span):
-            span = int(span)
-            kernel = np.ones(span) / span
-            return np.convolve(x, kernel, mode='same')
+        # pupil smooth + lowpass 1 Hz (order=3)
+        pupil_area = smooth_moving_average(pupil_area, smooth_pupil_value)
+        pupil_area = but_filter_low(pupil_area, order=3, cutoff_hz=1.0, fs_hz=fs)
 
-        def but_filter(x, cutoff, fs, order=3):
-            b, a = butter(order, cutoff, btype='bandpass')
-            return filtfilt(b, a, x)
+        # eyelid smooth + highpass 1 Hz
+        eyelid = smooth_moving_average(eyelid, 10)
+        eyelid = but_filter_high(eyelid, order=3, cutoff_hz=1.0, fs_hz=fs)
 
-        # smooth and filter pupil
-        pupil_area = smooth(pout['pupil_area'], smooth_pupil_value)
-        pupil_area = but_filter(
-            pupil_area, [.1/(pupil_sr/2), 1/(pupil_sr/2)], pupil_sr)
+        # whisk smooth
+        whisk_motion = smooth_moving_average(whisk_motion, 10)
 
-        def normalize(x):
-            x = np.asarray(x)
-            return (x - x.min()) / (x.max() - x.min())
+        # movmedian omitnan
+        eyelid = movmedian_omitnan(eyelid, 5)
+        whisk_motion = movmedian_omitnan(whisk_motion, 5)
 
-        pupil_area = normalize(pupil_area)
-        eyelid = smooth(eyelid, 10)
-        b, a = butter(3, [1/(pupil_sr/2)], btype='high')
-        eyelid = filtfilt(b,a, eyelid)
-        whisk_motion = normalize(whisk_motion)
+        # normalize range
+        pupil_area = normalize_range(pupil_area)
+        whisk_motion = normalize_range(whisk_motion)
+        eyelid = normalize_range(eyelid)
 
         pupil_psth = dict()
         whisk_psth = dict()
         eye_psth = dict()
+
         for idx, tone in enumerate(tone_letters):
             this_code = ord(tone)
             this_codes = np.flatnonzero(this_code == tone_codes)
@@ -559,16 +551,11 @@ def processTableRow(
             for jdx, tt in enumerate(tone_triggers):
                 chunk_win = np.array([-halftime_mot, halftime_mot]) + tt
 
-                if chunk_win.min() < 0 or chunk_win.max() > pout['pupil_times'][-1]:
+                if chunk_win.min() < 0 or chunk_win.max() > pupil_times[-1]:
                     continue
 
-                my_window = np.flatnonzero((pout['pupil_times'] > chunk_win[0]) & (
-                    pout['pupil_times'] <= chunk_win[1]))
-                if len(my_window) == mot_samples - 1:
-                    np.append(my_window, my_window[-1]+1)
-
-                if len(my_window) > mot_samples:
-                    print(tt)
+                my_window = fixed_window_indices(pupil_times, tone_triggers[jdx], mot_samples)
+                if my_window is None:
                     continue
                 pupil_chunks[jdx, :] = pupil_area[my_window]
                 whisk_chunks[jdx, :] = whisk_motion[my_window]
@@ -598,6 +585,51 @@ def processTableRow(
         return
 
     return processed_row
+
+def smooth_moving_average(x: np.ndarray, span: int) -> np.ndarray:
+    """Approximate MATLAB smooth(x, span) as moving average."""
+    x = np.asarray(x, dtype=float)
+    span = int(span)
+    if span <= 1:
+        return x.copy()
+    k = np.ones(span, dtype=float) / span
+    return np.convolve(x, k, mode="same")
+
+
+def but_filter_low(x: np.ndarray, order: int, cutoff_hz: float, fs_hz: float) -> np.ndarray:
+    wn = cutoff_hz / (fs_hz / 2.0)
+    b, a = butter(order, wn, btype="low")
+    return filtfilt(b, a, x)
+
+
+def but_filter_high(x: np.ndarray, order: int, cutoff_hz: float, fs_hz: float) -> np.ndarray:
+    wn = cutoff_hz / (fs_hz / 2.0)
+    b, a = butter(order, wn, btype="high")
+    return filtfilt(b, a, x)
+
+
+def movmedian_omitnan(x: np.ndarray, k: int) -> np.ndarray:
+    """Nan-aware rolling median approximating movmedian(...,'omitnan')."""
+    x = np.asarray(x, dtype=float)
+    k = int(k)
+    if k <= 1:
+        return x.copy()
+    pad = k // 2
+    out = np.empty_like(x)
+    for i in range(len(x)):
+        lo = max(0, i - pad)
+        hi = min(len(x), i + pad + 1)
+        out[i] = np.nanmedian(x[lo:hi])
+    return out
+
+def normalize_range(x: np.ndarray) -> np.ndarray:
+    """normalize(x,'range') with NaN safety."""
+    x = np.asarray(x, dtype=float)
+    mn = np.nanmin(x)
+    mx = np.nanmax(x)
+    if not np.isfinite(mn) or not np.isfinite(mx) or mx == mn:
+        return np.zeros_like(x, dtype=float)
+    return (x - mn) / (mx - mn)
 
 
 def expand_dict_columns(df: pd.DataFrame,
@@ -845,6 +877,140 @@ def angular_derivative_from_angles(angles, interval, speed_smoothing):
     return angular_velocity, angular_speed
 
 
+def load_mat_any(path: Union[str, Path], *, top_var: Optional[str] = None) -> Any:
+    """
+    Load MATLAB .mat files safely:
+      - v7.3 (HDF5): uses h5py and converts structs/cells/strings
+      - pre-v7.3: uses scipy.io.loadmat
+
+    Args:
+        path: path to .mat
+        top_var: if provided, returns only that top-level variable (e.g. "pupil_out")
+
+    Returns:
+        A Python object (usually dict) with numpy arrays, lists, and strings.
+    """
+    path = Path(path)
+
+    if h5py.is_hdf5(path):
+        with h5py.File(path, "r") as f:
+            out = _h5_to_py(f, f)
+            # MATLAB v7.3 files often have '#refs#' plus real variables
+            if isinstance(out, dict) and "#refs#" in out:
+                out.pop("#refs#", None)
+            return out[top_var] if (top_var is not None) else out
+
+    # Non-v7.3:
+    data = scipy.io.loadmat(
+        path,
+        struct_as_record=False,
+        squeeze_me=False,
+        simplify_cells=True,
+    )
+    # scipy adds these:
+    data.pop("__header__", None)
+    data.pop("__version__", None)
+    data.pop("__globals__", None)
+    return data[top_var] if (top_var is not None) else data
+
+
+def _h5_to_py(obj: Any, root: h5py.File) -> Any:
+    """
+    Recursively convert HDF5 objects into Python types,
+    with MATLAB-specific handling for:
+      - char arrays (uint16/uint8) -> str
+      - object references -> dereference
+      - cell arrays (datasets of refs) -> list
+      - structs (groups) -> dict
+    """
+    if isinstance(obj, h5py.Group):
+        d: Dict[str, Any] = {}
+        for k in obj.keys():
+            d[k] = _h5_to_py(obj[k], root)
+        return d
+
+    if isinstance(obj, h5py.Dataset):
+        # MATLAB cells/struct fields sometimes stored as refs
+        if obj.dtype == object or h5py.check_dtype(ref=obj.dtype) is not None:
+            data = obj[()]
+            return _convert_ref_array(data, root)
+
+        arr = obj[()]
+
+        # Try to decode MATLAB char arrays stored as uint16/uint8
+        maybe_str = _maybe_decode_matlab_char(arr)
+        if maybe_str is not None:
+            return maybe_str
+
+        # Normal numeric array
+        return np.array(arr)
+
+    # Fallback (shouldn't happen often)
+    return obj
+
+
+def _convert_ref_array(x: Any, root: h5py.File) -> Any:
+    """
+    Convert an array/scalar of HDF5 references into Python objects.
+    This covers MATLAB cell arrays (arrays of refs) and nested structs.
+    """
+    # Scalar reference
+    if isinstance(x, h5py.Reference):
+        if not x:
+            return None
+        return _h5_to_py(root[x], root)
+
+    # Numpy array of references
+    x = np.array(x)
+    if x.dtype == object:
+        # Could be nested python objects already; recurse elementwise
+        return [[_convert_ref_array(elem, root) for elem in row] for row in x]
+
+    # h5py sometimes yields dtype=object-like but not literally object; handle refs elementwise
+    if x.ndim == 0:
+        return _convert_ref_array(x.item(), root)
+
+    # Convert to list while preserving shape
+    def rec(idx_prefix: tuple) -> Any:
+        if len(idx_prefix) == x.ndim:
+            return _convert_ref_array(x[idx_prefix], root)
+        return [rec(idx_prefix + (i,)) for i in range(x.shape[len(idx_prefix)])]
+
+    return rec(tuple())
+
+
+def _maybe_decode_matlab_char(arr: Any) -> Optional[str]:
+    """
+    Heuristic: MATLAB stores strings as 2D char arrays (uint16 or uint8),
+    often shaped (N,1) or (1,N) or (N,M).
+    """
+    a = np.array(arr)
+
+    if a.dtype not in (np.uint16, np.uint8):
+        return None
+
+    # If it's not at least 2D, probably not a MATLAB char matrix
+    if a.ndim < 2:
+        return None
+
+    # Decode using MATLAB column-major order
+    flat = a.flatten(order="F")
+
+    # Remove trailing zeros (MATLAB padding)
+    flat = flat[flat != 0]
+
+    # Guard: if values don't look like text, skip
+    if flat.size == 0:
+        return ""
+
+    # Most ASCII/Unicode text is in a sane range; if it's crazy, it's probably not a string
+    if np.any(flat > 0x10FFFF):
+        return None
+
+    try:
+        return "".join(chr(int(c)) for c in flat)
+    except Exception:
+        return None
 # ---------- small helpers ----------
 
 
@@ -1301,6 +1467,22 @@ def calc_p_value_from_distribution(distribution: np.ndarray, real_value: float) 
     pctile = (idx + 0) / len(distribution)  # MATLAB uses 1-based; effect is negligible
     return 1.0 - pctile
 
+
+def fixed_window_indices(pupil_times: np.ndarray, t0: float, mot_samples: int) -> np.ndarray | None:
+    """
+    Return exactly mot_samples indices centered on t0 by nearest-sample indexing.
+    """
+    # closest sample to trigger
+    center = int(np.argmin(np.abs(pupil_times - t0)))
+
+    half = mot_samples // 2
+    start = center - half
+    end = start + mot_samples  # exclusive
+
+    if start < 0 or end > len(pupil_times):
+        return None
+
+    return np.arange(start, end, dtype=np.int64)
 
 if __name__ == "__main__":
     batch_process()
