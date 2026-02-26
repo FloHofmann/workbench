@@ -443,7 +443,8 @@ def processTableRow(
             # processing
             # spike times
             spkT = processed_data['spike_sorting_data']['spike_times']
-
+            
+            n_stims = 0
             # get tone times
             tone_times = raw_data['ephys_data']['keyboard_times'][:]
             # get tone codes
@@ -465,6 +466,7 @@ def processTableRow(
                 this_code = ord(char)  # translate character to ascii
                 # find occurrences of ascii character in all stimulations
                 this_codes = np.flatnonzero(this_code == tone_codes)
+                n_stims += len(this_codes)
 
                 # filter for code trigger timings in samples
                 tone_triggers = tone_onset[this_codes]
@@ -483,6 +485,7 @@ def processTableRow(
             processed_row['RasterRows'] = RasterRows
             processed_row['RasterTimes'] = RasterTimes
             processed_row['RasterRate'] = RasterRate
+            processed_row['n_stims'] = n_stims
 
         # Pupil Data
         p = folderpath / "pupil_data.mat"
