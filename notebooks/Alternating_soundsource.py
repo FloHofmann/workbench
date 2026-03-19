@@ -9,7 +9,6 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import panel as pn
 import polars as pl
 import seaborn as sns
 from matplotlib.backends.backend_pdf import PdfPages
@@ -22,9 +21,8 @@ from scipy.stats import (
 )
 
 from workbench.data.preprocess import combTableCreate, expand_dict_columns
-from workbench.plotting import serve_cell_dashboard
 
-individuals_flag = True
+individuals_flag = False
 
 # %%
 conn = sqlite3.connect(
@@ -159,8 +157,6 @@ for idx, stim in enumerate(stim_keys):
 
     baseline_subtract_whisk[:, :, idx] = whisk_avg[:, :, idx] - baseline_median
 
-print(baseline_subtract_whisk.shape)
-# %%
 
 # construct whisking
 # with PdfPages(r"\\172.25.250.112\burgalossi\lab share\Data\Florian\soundsource_switching\individuals.pdf") as pdf:
@@ -179,7 +175,6 @@ layout = [
     ["r_e", "psth_e", "line_e", "info"],
     ["r_r", "psth_r", "line_r", "."],
 ]
-
 
 # ─────────────────────────────────────────────────────────────
 #  MAIN LOOP: one page per cell
@@ -341,10 +336,7 @@ for i, key in enumerate(speaker_position):
 plt.tight_layout()
 plt.show()
 
-
 # %%
-
-
 resp_peak_df = pd.DataFrame(resp_peak_fr, columns=list("awer"))
 long_df = resp_peak_df.reset_index().melt(
     id_vars="index", var_name="speaker", value_name="max_psth"
@@ -371,11 +363,12 @@ plt.title("max psth")
 plt.tight_layout()
 plt.show()
 
-# implement friedman test (non parametric Anova to compare the between the speaker responses but respecting the across within-cell pairing)
+# implement friedman notest (non parametric Anova to compare the between the speaker responses but respecting the across within-cell pairing)
 stat, p = friedmanchisquare(
     resp_peak_df["a"], resp_peak_df["w"], resp_peak_df["e"], resp_peak_df["r"]
 )
 print(f"Friedman Chi^2: {stat:.2f}; p: {p:.2f}")
+print("-" * 70)
 
 
 # %%
@@ -427,6 +420,8 @@ corrected_sorted_fr_p = false_discovery_control(fr_p_list)
 for a in zip(itertools.combinations(speakers, 2), corrected_sorted_fr_p):
     print(f"{a[0][0]} vs {a[0][1]}: corrected p = {a[1]:.2f}")
 
+print("-" * 70)
+
 # %%
 # calculate the integral over the bins
 # auc is computed on new rate
@@ -460,6 +455,8 @@ for c1, c2 in itertools.combinations(conds, 2):
 corrected_auc_p = false_discovery_control(auc_p_list)
 for a in zip(itertools.combinations(speakers, 2), corrected_auc_p):
     print(f"{a[0][0]} vs {a[0][1]}: corrected p = {a[1]:.2f}")
+
+print("-" * 70)
 
 
 # %%
@@ -496,7 +493,7 @@ auc_stat, auc_p = friedmanchisquare(
     auc_resp_sorted[:, 2],
     auc_resp_sorted[:, 3],
 )
-print(f"Friedman Test p: {auc_p:.2f}")
+print(f"Friedman notest p: {auc_p:.2f}")
 auc_sort_p_list = []
 for c1, c2 in itertools.combinations(conds, 2):
     stat, p = wilcoxon(auc_resp_sorted[:, c1], auc_resp_sorted[:, c2])
@@ -511,17 +508,28 @@ for a in zip(
 ):
     print(f"{a[0][0]} vs {a[0][1]}: corrected p = {a[1]:.2f}")
 
+print("-" * 70)
+
 # %% [markdown]
 # Computation of correlations for each cell
 
 # %%
 # sort new_rate for the relative distance to the speaker
 new_rate_sort = np.take_along_axis(new_rate, idx_sorted[:, None, :], axis=2)
+# same for the whisker response
+avg_whisker_sort = np.take_along_axis(whisk_avg, idx_sorted[:, None, :], axis=2)
 
 # baseline subtract new_rate first
 baseline_time_idx = (bins_plot > -1000) & (bins_plot < 0)
 baseline_mean = new_rate_sort[:, baseline_time_idx, :].mean(axis=1, keepdims=True)
 new_rate_bs = new_rate_sort - baseline_mean
+
+# same for the whisker response
+baseline_whisk_time_idx = (trigger_time > -1000) & (trigger_time < 0)
+baseline_mean_whisk = avg_whisker_sort[:, baseline_whisk_time_idx, :].mean(
+    axis=1, keepdims=True
+)
+avg_whisker_bs = avg_whisker_sort - baseline_mean_whisk
 
 sigma = 2
 new_rate_bs_smooth = gaussian_filter1d(new_rate_bs, sigma=sigma, axis=1)
@@ -540,6 +548,7 @@ for speaker in range(4):
     )
     plt.xlim(-0.2, 1)
 
+plt.title(f"Cell {cell} responses")
 plt.legend()
 plt.show()
 
@@ -699,29 +708,49 @@ mean_corr = corr_values.mean()
 std_corr = corr_values.std()
 
 print(f"Mean correlation: {mean_corr:.3f} ± {std_corr:.3f}")
+print("-" * 70)
 
-# %%
+# %% average response, sorted by speaker distance
 mean_psth = new_rate_bs_smooth.mean(axis=0)
-sem_psth = new_rate_bs_smooth.std(axis=0) / np.sqrt(new_rate_bs_smooth.shape[0])
+sd_psth = new_rate_bs_smooth.std(axis=0)
 plot_resp_show = np.arange(resp_window[0] - 50, resp_window[-1] + 100, step=1)
 
-fig, ax = plt.subplots(figsize=(12, 6))
+# same for the whisking response
+mean_whisk = avg_whisker_bs.mean(axis=0)
+sd_psth_whisk = avg_whisker_bs.std(axis=0)
+plot_resp_show_whisk = (trigger_time <= 0.5) & (trigger_time >= -0.1)
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
 
 x = bins_plot[plot_resp_show] / 1000
 
 for idx, spk in enumerate(speakers):
     y = mean_psth[plot_resp_show, idx]
-    sem = sem_psth[plot_resp_show, idx]
+    sem = sd_psth[plot_resp_show, idx]
 
-    ax.plot(x, y, label=distance_label[idx])
-    ax.fill_between(x, y - sem, y + sem, alpha=0.12)
+    ax1.plot(x, y, label=distance_label[idx])
+    ax1.fill_between(x, y - sem, y + sem, alpha=0.12)
 
-ax.set_xlabel("Time (s)")
-ax.set_ylabel("Baseline-subtracted firing rate")
-ax.legend()
+ax1.set_xlabel("Time (s)")
+ax1.set_ylabel("Baseline-subtracted firing rate")
+ax1.legend()
 
-ax.spines["top"].set_visible(False)
-ax.spines["right"].set_visible(False)
+ax1.spines["top"].set_visible(False)
+ax1.spines["right"].set_visible(False)
+
+for idx, spk in enumerate(speakers):
+    y = mean_whisk[plot_resp_show_whisk, idx]
+    sem = sd_psth_whisk[plot_resp_show_whisk, idx]
+
+    ax2.plot(trigger_time[plot_resp_show_whisk], y, label=distance_label[idx])
+    ax2.fill_between(trigger_time[plot_resp_show_whisk], y - sem, y + sem, alpha=0.12)
+
+ax2.set_xlabel("Time (s)")
+ax2.set_ylabel("Baseline-subtracted Whisker pad")
+ax2.legend()
+
+ax2.spines["top"].set_visible(False)
+ax2.spines["right"].set_visible(False)
 
 plt.show()
 
@@ -747,8 +776,6 @@ pair_labels = [pair_labels[i] for i in sort_idx]
 # corr_pairs already exists:
 # shape = (n_cells, 6)
 # columns correspond to pair_labels order
-import matplotlib.pyplot as plt
-import numpy as np
 
 np.random.seed(42)
 
@@ -796,7 +823,6 @@ ax.spines["right"].set_visible(False)
 plt.tight_layout()
 plt.show()
 
-
 stat, p = friedmanchisquare(*[corr_pairs[:, i] for i in range(n_pairs)])
 
 print(f"Friedman chi² = {stat:.3f}, p = {p:.3f}")
@@ -808,3 +834,5 @@ for i, j in itertools.combinations(range(n_pairs), 2):
     stat, p = wilcoxon(corr_pairs[:, i], corr_pairs[:, j])
 
     print(f"({xlab_pairs[i]}) vs ({xlab_pairs[j]}): p = {p:.3f}")
+
+print("-" * 70)
