@@ -1,6 +1,3 @@
-# %% [markdown]
-# # alternating soundsource analysis
-
 # %%
 import itertools
 import sqlite3
@@ -828,3 +825,230 @@ for i, j in itertools.combinations(range(n_pairs), 2):
     print(f"({xlab_pairs[i]}) vs ({xlab_pairs[j]}): p = {p:.3f}")
 
 print("-" * 70)
+
+# %%
+%matplotlib QtAgg
+
+# Helper function used for visualization in the following examples
+def identify_axes(ax_dict, fontsize=48):
+    """
+    Helper to identify the Axes in the examples below.
+
+    Draws the label in a large font in the center of the Axes.
+
+    Parameters
+    ----------
+    ax_dict : dict[str, Axes]
+        Mapping between the title / label and the Axes.
+    fontsize : int, optional
+        How big the label should be.
+    """
+    kw = dict(ha="center", va="center", fontsize=fontsize, color="darkgrey")
+    for k, ax in ax_dict.items():
+        ax.text(0.5, 0.5, k, transform=ax.transAxes, **kw)
+
+
+# join plots into one big mosaic with good alignment
+
+# --- pre-compute safe axis limits based on the visible x window ---
+target_cell = 3
+_xlim = (-0.1, 0.5)
+
+_psth_mask = (bins_plot / 1000 >= _xlim[0]) & (bins_plot / 1000 <= _xlim[1])
+_whisk_mask = (trigger_time >= _xlim[0]) & (trigger_time <= _xlim[1])
+
+_psth_max = np.nanmax(new_rate[target_cell][_psth_mask, :])
+_psth_ylim = (0, _psth_max * 1.15 if _psth_max > 0 else 1.0)
+
+_whisk_in_view = baseline_subtract_whisk[target_cell][_whisk_mask, :]
+_w_min, _w_max = np.nanmin(_whisk_in_view), np.nanmax(_whisk_in_view)
+_w_pad = max((_w_max - _w_min) * 0.1, 0.02)
+_whisk_ylim = (_w_min - _w_pad, _w_max + _w_pad)
+
+fig = plt.figure(figsize=(6.30, 8.77), layout="constrained")
+
+# split vertically: top subfigure = individual-cell rows, bottom = group summary rows
+fig_top, fig_bot = fig.subfigures(2, 1, height_ratios=[1, 1])
+
+# top subfigure: wider first column for the polar plot
+axd_top = fig_top.subplot_mosaic(
+    """
+    .ABCD
+    Refgh
+    """,
+    width_ratios=[1.5, 1, 1, 1, 1],
+    per_subplot_kw={"R": {"projection": "polar"}},
+)
+
+# bottom subfigure: independent column grid — symmetric panels, narrow centre gap
+axd_bot = fig_bot.subplot_mosaic(
+    """
+    xx.zz
+    yy.vv
+    """,
+    width_ratios=[1, 1, 0.3, 1, 1],
+)
+
+# merge so all downstream code can use a single axd dict
+axd = {**axd_top, **axd_bot}
+
+# remove top/right spines from all cartesian axes (skip polar)
+for _k, _ax in axd.items():
+    if _k != "R":
+        _ax.spines[["top", "right"]].set_visible(False)
+
+# polar axes is already created via per_subplot_kw
+ax_polar = axd["R"]
+
+angles_deg = list(speaker_position.values())
+labels = list(speaker_position.keys())
+angles_rad = np.deg2rad(angles_deg)
+
+# Angle grid with labels a/w/e/r
+ax_polar.set_thetagrids(angles_deg, angles_deg)
+ax_polar.plot(np.deg2rad(DIRECTIONS), HDRateSmooth[target_cell])
+
+# Optional: put markers at those angles (radius = 1)
+ax_polar.scatter(angles_rad, np.ones(len(angles_rad)), s=40)
+
+# set the individual plots top row — x-axis in seconds (bins_plot / 1000)
+axd["A"].bar(
+    bins_plot / 1000,
+    new_rate[target_cell, :, 0],
+    width=time_bin,
+    align="edge",
+    edgecolor="none",
+)
+axd["A"].set_ylabel("Firing Rate [Hz]")
+axd["A"].set_xlim(_xlim)
+axd["A"].set_ylim(_psth_ylim)
+
+axd["B"].bar(
+    bins_plot / 1000,
+    new_rate[target_cell, :, 1],
+    width=time_bin,
+    align="edge",
+    edgecolor="none",
+)
+axd["B"].set_ylabel("Firing Rate [Hz]")
+axd["B"].set_xlim(_xlim)
+axd["B"].set_ylim(_psth_ylim)
+
+axd["C"].bar(
+    bins_plot / 1000,
+    new_rate[target_cell, :, 2],
+    width=time_bin,
+    align="edge",
+    edgecolor="none",
+)
+axd["C"].set_ylabel("Firing Rate [Hz]")
+axd["C"].set_xlim(_xlim)
+axd["C"].set_ylim(_psth_ylim)
+
+axd["D"].bar(
+    bins_plot / 1000,
+    new_rate[target_cell, :, 3],
+    width=time_bin,
+    align="edge",
+    edgecolor="none",
+)
+axd["D"].set_ylabel("Firing Rate [Hz]")
+axd["D"].set_xlim(_xlim)
+axd["D"].set_ylim(_psth_ylim)
+
+axd["e"].plot(trigger_time, baseline_subtract_whisk[target_cell, :, 0])
+axd["e"].set_xlim(_xlim)
+axd["e"].set_ylim(_whisk_ylim)
+
+axd["f"].plot(trigger_time, baseline_subtract_whisk[target_cell, :, 1])
+axd["f"].set_xlim(_xlim)
+axd["f"].set_ylim(_whisk_ylim)
+
+axd["g"].plot(trigger_time, baseline_subtract_whisk[target_cell, :, 2])
+axd["g"].set_xlim(_xlim)
+axd["g"].set_ylim(_whisk_ylim)
+
+axd["h"].plot(trigger_time, baseline_subtract_whisk[target_cell, :, 3])
+axd["h"].set_xlim(_xlim)
+axd["h"].set_ylim(_whisk_ylim)
+
+# mean psth and whisk
+x = bins_plot[plot_resp_show] / 1000
+for idx, spk in enumerate(speakers):
+    y = mean_psth[plot_resp_show, idx]
+    sem = sd_psth[plot_resp_show, idx]
+
+    axd["x"].plot(x, y, label=distance_label[idx])
+    axd["x"].fill_between(x, y - sem, y + sem, alpha=0.12)
+
+axd["x"].set_xlim(_xlim)
+axd["x"].set_xlabel("Time (s)")
+axd["x"].set_ylabel("Firing Rate [Hz]")
+
+for idx, spk in enumerate(speakers):
+    y = mean_whisk[plot_resp_show_whisk, idx]
+    sem = sd_psth_whisk[plot_resp_show_whisk, idx]
+
+    axd["z"].plot(trigger_time[plot_resp_show_whisk], y, label=distance_label[idx])
+    axd["z"].fill_between(trigger_time[plot_resp_show_whisk], y - sem, y + sem, alpha=0.12)
+
+axd["z"].set_xlabel("Time (s)")
+axd["z"].set_ylabel("Whisker Pad motion")
+axd["z"].set_xlim(_xlim)
+axd["z"].set_ylim(_whisk_ylim)
+
+# panel y — Max FR sorted by speaker distance
+sns.boxplot(
+    data=fr_resp_df_sort,
+    x="speaker",
+    y="fr_psth",
+    ax=axd["y"],
+    fliersize=0,
+    color="steelblue",
+)
+sns.lineplot(
+    data=fr_resp_df_sort,
+    x="speaker",
+    y="fr_psth",
+    hue="index",
+    linewidth=0.8,
+    alpha=0.4,
+    legend=False,
+    ax=axd["y"],
+)
+axd["y"].set_xticks([0, 1, 2, 3])
+axd["y"].set_xticklabels(
+    ["Closest", "2nd Closest", "2nd Farthest", "Farthest"],
+    rotation=20,
+    ha="right",
+)
+axd["y"].set_ylabel("Peak FR [Hz]")
+axd["y"].set_xlabel("Speaker distance to PD")
+
+# panel v — AUC sorted by speaker distance
+sns.boxplot(
+    data=auc_resp_df_sort,
+    x="speaker",
+    y="auc_psth",
+    ax=axd["v"],
+    fliersize=0,
+    color="steelblue",
+)
+sns.lineplot(
+    data=auc_resp_df_sort,
+    x="speaker",
+    y="auc_psth",
+    hue="index",
+    linewidth=0.8,
+    alpha=0.4,
+    legend=False,
+    ax=axd["v"],
+)
+axd["v"].set_xticks([0, 1, 2, 3])
+axd["v"].set_xticklabels(
+    ["Closest", "2nd Closest", "2nd Farthest", "Farthest"],
+    rotation=20,
+    ha="right",
+)
+axd["v"].set_ylabel("AUC [spikes]")
+axd["v"].set_xlabel("Speaker distance to PD")
