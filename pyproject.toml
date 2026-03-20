@@ -13,6 +13,7 @@ dependencies = [
     "hdf5storage>=0.2.2",
     "holoviews>=1.21.0",
     "hvplot>=0.12.1",
+    "ipython>=9.3.0",
     "jax>=0.8.2",
     "jupyter>=1.1.1",
     "jupyter-bokeh>=4.0.5",

@@ -230,7 +230,7 @@ if individuals_flag:
                 ax_p.bar(
                     bins_plot,
                     new_rate[row_idx, :, enum],
-                    width=time_bin * 1000,
+                    width=time_bin,
                     align="edge",
                     edgecolor="none",
                 )
@@ -238,9 +238,7 @@ if individuals_flag:
 
                 # ---------------- LINE PLOT ------------------
                 # median baseline subtract the response
-                ax_l.plot(
-                    trigger_time * 1000, baseline_subtract_whisk[row_idx, :, enum]
-                )
+                ax_l.plot(trigger_time, baseline_subtract_whisk[row_idx, :, enum])
                 ax_l.set_ylim((-0.2, 0.8))
 
             # ----------------------------------------------------------
@@ -341,9 +339,7 @@ resp_peak_df = pd.DataFrame(resp_peak_fr, columns=list("awer"))
 long_df = resp_peak_df.reset_index().melt(
     id_vars="index", var_name="speaker", value_name="max_psth"
 )
-
 plt.figure(figsize=(10, 5))
-
 sns.boxplot(data=long_df, x="speaker", y="max_psth", fliersize=0)
 
 sns.lineplot(
@@ -513,7 +509,6 @@ print("-" * 70)
 # %% [markdown]
 # Computation of correlations for each cell
 
-# %%
 # sort new_rate for the relative distance to the speaker
 new_rate_sort = np.take_along_axis(new_rate, idx_sorted[:, None, :], axis=2)
 # same for the whisker response
@@ -553,7 +548,6 @@ plt.legend()
 plt.show()
 
 # %%
-
 n_cells = response_data.shape[0]
 n_speakers = response_data.shape[2]
 
@@ -582,9 +576,7 @@ cbar.set_label("Pearson r")
 plt.tight_layout()
 plt.show()
 
-
 # %%
-
 # extract the unique correlations per cell
 triu_idx = np.triu_indices(n_speakers, k=1)
 
