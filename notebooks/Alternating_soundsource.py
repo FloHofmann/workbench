@@ -18,9 +18,10 @@ from scipy.stats import (
 )
 
 from workbench.data.preprocess import combTableCreate, expand_dict_columns
-%matplotlib QtAgg
 
-individuals_flag = False
+# %matplotlib QtAgg
+
+individuals_flag = True
 
 # %%
 conn = sqlite3.connect(
@@ -115,7 +116,10 @@ raster_rows = comb_table["RasterRows"]
 raster_rate = comb_table["RasterRate"]
 HDRateSmooth = comb_table["hdRateSmooth"]
 DIRECTIONS = np.linspace(0, 360, 37)
-stim_keys = raster_times[0].keys()
+stim_keys = list(raster_times[0].keys())
+stim_key_to_idx = {k: i for i, k in enumerate(stim_keys)}
+# reorder index: maps canonical speakers order -> stim_keys order
+speaker_idx = [stim_key_to_idx[k] for k in speakers]
 trigger_time = np.array(comb_table["trigger_time"][0].to_list())
 time_pre = (trigger_time < 0) & (trigger_time >= -0.5)
 whisk_psth = {
@@ -155,6 +159,10 @@ for idx, stim in enumerate(stim_keys):
 
     baseline_subtract_whisk[:, :, idx] = whisk_avg[:, :, idx] - baseline_median
 
+# reorder axis-2 from stim_keys order to canonical speakers order ['a','w','e','r']
+new_rate = new_rate[:, :, speaker_idx]
+whisk_avg = whisk_avg[:, :, speaker_idx]
+baseline_subtract_whisk = baseline_subtract_whisk[:, :, speaker_idx]
 
 # construct whisking
 # with PdfPages(r"\\172.25.250.112\burgalossi\lab share\Data\Florian\soundsource_switching\individuals.pdf") as pdf:
@@ -302,10 +310,10 @@ if individuals_flag:
 # %%
 # peak fr for all soundsources
 preferred = np.array(comb_table["HDAngle"])
-speakers = np.array(list(speaker_position.values()))
+speaker_angles = np.array(list(speaker_position.values()))
 
 # retrieve the cirular distance form the preferred direction to the speakers
-diff = preferred[:, None] - speakers[None, :]
+diff = preferred[:, None] - speaker_angles[None, :]
 wrapped = (diff + 180) % 360 - 180
 dist_deg = np.abs(wrapped)
 
@@ -313,7 +321,7 @@ dist_deg = np.abs(wrapped)
 idx_sorted = np.argsort(dist_deg, axis=1)
 dist_sorted = np.take_along_axis(dist_deg, idx_sorted, axis=1)
 # also sort the speakers so we don't lose track
-speakers_sorted = np.take_along_axis(speakers[None, :], idx_sorted, axis=1)
+speakers_sorted = np.take_along_axis(speaker_angles[None, :], idx_sorted, axis=1)
 # retrieve the max response for each psth and sort as we did with the relative distance to the speakers
 resp_peak_fr = np.array(
     [np.max(new_rate[:, resp_window, i], axis=1) for i in range(0, 4)]
@@ -361,6 +369,8 @@ plt.show()
 stat, p = friedmanchisquare(
     resp_peak_df["a"], resp_peak_df["w"], resp_peak_df["e"], resp_peak_df["r"]
 )
+print("-" * 70)
+print("Max FR not sorted")
 print(f"Friedman Chi^2: {stat:.2f}; p: {p:.2f}")
 print("-" * 70)
 
@@ -402,7 +412,10 @@ fr_stat, fr_p = friedmanchisquare(
     fr_resp_sorted[:, 2],
     fr_resp_sorted[:, 3],
 )
+print("-" * 70)
+print("Max FR sorted")
 print(f"Friedman Chi square: {fr_stat:.2f}, p = {fr_p:.2f}")
+print("-" * 70)
 
 conds = [0, 1, 2, 3]
 fr_p_list = []
@@ -411,7 +424,12 @@ for c1, c2 in itertools.combinations(conds, 2):
     fr_p_list.append(p)
 
 corrected_sorted_fr_p = false_discovery_control(fr_p_list)
-for a in zip(itertools.combinations(speakers, 2), corrected_sorted_fr_p):
+for a in zip(
+    itertools.combinations(
+        ["closest", "second_closest", "second_farthest", "farthest"], 2
+    ),
+    corrected_sorted_fr_p,
+):
     print(f"{a[0][0]} vs {a[0][1]}: corrected p = {a[1]:.2f}")
 
 print("-" * 70)
@@ -437,6 +455,8 @@ sns.lineplot(
     data=auc_resp_df, x="speaker", y="auc_psth", hue="index", linewidth=1, legend=False
 )
 plt.show()
+print("-" * 70)
+print("AUC unsorted")
 print(auc_stat, auc_p)
 
 conds = [0, 1, 2, 3]
@@ -487,6 +507,8 @@ auc_stat, auc_p = friedmanchisquare(
     auc_resp_sorted[:, 2],
     auc_resp_sorted[:, 3],
 )
+print("-" * 70)
+print("AUC Sorted")
 print(f"Friedman notest p: {auc_p:.2f}")
 auc_sort_p_list = []
 for c1, c2 in itertools.combinations(conds, 2):
@@ -611,7 +633,7 @@ plt.show()
 
 # %%
 fig, axes = plt.subplots(1, 3, figsize=(15, 4))
-speaker_keys = list(stim_keys)  # e.g. ['a','e','r','w']
+speaker_keys = list(speakers)  # canonical order: ['a','w','e','r']
 speaker_position = {"a": 93, "w": 178, "e": 272, "r": 356}
 speaker_angles_deg = np.array([speaker_position[k] for k in speaker_keys])
 
@@ -624,7 +646,7 @@ im = axes[0].imshow(mean_corr_matrix, vmin=0, vmax=1, cmap="viridis")
 axes[0].set_title("Mean correlation matrix")
 axes[0].set_xticks(range(4))
 axes[0].set_yticks(range(4))
-speakers_deg_str = [f"{spk} °" for spk in speakers]
+speakers_deg_str = [f"{spk} °" for spk in speaker_angles]
 axes[0].set_xticklabels(speakers_deg_str)
 axes[0].set_yticklabels(speakers_deg_str)
 
@@ -832,6 +854,7 @@ print("-" * 70)
 
 # %%
 
+
 # Helper function used for visualization in the following examples
 def identify_axes(ax_dict, fontsize=48):
     """
@@ -868,32 +891,32 @@ _w_min, _w_max = np.nanmin(_whisk_in_view), np.nanmax(_whisk_in_view)
 _w_pad = max((_w_max - _w_min) * 0.1, 0.02)
 _whisk_ylim = (_w_min - _w_pad, _w_max + _w_pad)
 
-#fig = plt.figure(figsize=(6.30, 8.77), layout="constrained")
+# fig = plt.figure(figsize=(6.30, 8.77), layout="constrained")
 #
 ## split vertically: top subfigure = individual-cell rows, bottom = group summary rows
-#fig_top, fig_bot = fig.subfigures(2, 1, height_ratios=[1, 1])
+# fig_top, fig_bot = fig.subfigures(2, 1, height_ratios=[1, 1])
 #
 ## top subfigure: wider first column for the polar plot
-#axd_top = fig_top.subplot_mosaic(
+# axd_top = fig_top.subplot_mosaic(
 #    """
 #    .ABCD
 #    Refgh
 #    """,
 #    width_ratios=[1.5, 1, 1, 1, 1],
 #    per_subplot_kw={"R": {"projection": "polar"}},
-#)
+# )
 #
 ## bottom subfigure: independent column grid — symmetric panels, narrow centre gap
-#axd_bot = fig_bot.subplot_mosaic(
+# axd_bot = fig_bot.subplot_mosaic(
 #    """
 #    xx.zz
 #    yy.vv
 #    """,
 #    width_ratios=[1, 1, 0.3, 1, 1],
-#)
+# )
 
 # merge so all downstream code can use a single axd dict
-#axd = {**axd_top, **axd_bot}
+# axd = {**axd_top, **axd_bot}
 fig = plt.figure(figsize=(12.60, 8.77), layout="constrained")
 
 # split horizontally: left subfigure = individual-cell panels, right = group summary
@@ -1022,7 +1045,9 @@ for idx, spk in enumerate(speakers):
     sem = sd_psth_whisk[plot_resp_show_whisk, idx]
 
     axd["z"].plot(trigger_time[plot_resp_show_whisk], y, label=distance_label[idx])
-    axd["z"].fill_between(trigger_time[plot_resp_show_whisk], y - sem, y + sem, alpha=0.12)
+    axd["z"].fill_between(
+        trigger_time[plot_resp_show_whisk], y - sem, y + sem, alpha=0.12
+    )
 
 axd["z"].set_xlabel("Time (s)")
 axd["z"].set_ylabel("Whisker Pad motion")
