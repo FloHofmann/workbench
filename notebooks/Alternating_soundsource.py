@@ -18,6 +18,7 @@ from scipy.stats import (
 )
 
 from workbench.data.preprocess import combTableCreate, expand_dict_columns
+%matplotlib QtAgg
 
 individuals_flag = False
 
@@ -614,6 +615,9 @@ speaker_keys = list(stim_keys)  # e.g. ['a','e','r','w']
 speaker_position = {"a": 93, "w": 178, "e": 272, "r": 356}
 speaker_angles_deg = np.array([speaker_position[k] for k in speaker_keys])
 
+# %%
+print(speaker_angles_deg)
+# %%
 
 # heatmap
 im = axes[0].imshow(mean_corr_matrix, vmin=0, vmax=1, cmap="viridis")
@@ -827,7 +831,6 @@ for i, j in itertools.combinations(range(n_pairs), 2):
 print("-" * 70)
 
 # %%
-%matplotlib QtAgg
 
 # Helper function used for visualization in the following examples
 def identify_axes(ax_dict, fontsize=48):
@@ -865,23 +868,52 @@ _w_min, _w_max = np.nanmin(_whisk_in_view), np.nanmax(_whisk_in_view)
 _w_pad = max((_w_max - _w_min) * 0.1, 0.02)
 _whisk_ylim = (_w_min - _w_pad, _w_max + _w_pad)
 
-fig = plt.figure(figsize=(6.30, 8.77), layout="constrained")
+#fig = plt.figure(figsize=(6.30, 8.77), layout="constrained")
+#
+## split vertically: top subfigure = individual-cell rows, bottom = group summary rows
+#fig_top, fig_bot = fig.subfigures(2, 1, height_ratios=[1, 1])
+#
+## top subfigure: wider first column for the polar plot
+#axd_top = fig_top.subplot_mosaic(
+#    """
+#    .ABCD
+#    Refgh
+#    """,
+#    width_ratios=[1.5, 1, 1, 1, 1],
+#    per_subplot_kw={"R": {"projection": "polar"}},
+#)
+#
+## bottom subfigure: independent column grid — symmetric panels, narrow centre gap
+#axd_bot = fig_bot.subplot_mosaic(
+#    """
+#    xx.zz
+#    yy.vv
+#    """,
+#    width_ratios=[1, 1, 0.3, 1, 1],
+#)
 
-# split vertically: top subfigure = individual-cell rows, bottom = group summary rows
-fig_top, fig_bot = fig.subfigures(2, 1, height_ratios=[1, 1])
+# merge so all downstream code can use a single axd dict
+#axd = {**axd_top, **axd_bot}
+fig = plt.figure(figsize=(12.60, 8.77), layout="constrained")
 
-# top subfigure: wider first column for the polar plot
-axd_top = fig_top.subplot_mosaic(
+# split horizontally: left subfigure = individual-cell panels, right = group summary
+fig_left, fig_right = fig.subfigures(1, 2, width_ratios=[1, 1])
+
+# left subfigure: polar plot spans both columns in top row,
+# then ABCD × efgh paired per direction
+axd_top = fig_left.subplot_mosaic(
     """
-    .ABCD
-    Refgh
+    .R
+    Ae
+    Bf
+    Cg
+    Dh
     """,
-    width_ratios=[1.5, 1, 1, 1, 1],
     per_subplot_kw={"R": {"projection": "polar"}},
 )
 
-# bottom subfigure: independent column grid — symmetric panels, narrow centre gap
-axd_bot = fig_bot.subplot_mosaic(
+# right subfigure: group summary — symmetric panels, narrow centre gap
+axd_bot = fig_right.subplot_mosaic(
     """
     xx.zz
     yy.vv
@@ -919,7 +951,7 @@ axd["A"].bar(
     align="edge",
     edgecolor="none",
 )
-axd["A"].set_ylabel("Firing Rate [Hz]")
+axd["A"].set_ylabel(f"{speaker_position['a']}°")
 axd["A"].set_xlim(_xlim)
 axd["A"].set_ylim(_psth_ylim)
 
@@ -930,7 +962,7 @@ axd["B"].bar(
     align="edge",
     edgecolor="none",
 )
-axd["B"].set_ylabel("Firing Rate [Hz]")
+axd["B"].set_ylabel(f"{speaker_position['w']}°")
 axd["B"].set_xlim(_xlim)
 axd["B"].set_ylim(_psth_ylim)
 
@@ -941,7 +973,7 @@ axd["C"].bar(
     align="edge",
     edgecolor="none",
 )
-axd["C"].set_ylabel("Firing Rate [Hz]")
+axd["C"].set_ylabel(f"{speaker_position['e']}°")
 axd["C"].set_xlim(_xlim)
 axd["C"].set_ylim(_psth_ylim)
 
@@ -952,7 +984,7 @@ axd["D"].bar(
     align="edge",
     edgecolor="none",
 )
-axd["D"].set_ylabel("Firing Rate [Hz]")
+axd["D"].set_ylabel(f"{speaker_position['r']}°")
 axd["D"].set_xlim(_xlim)
 axd["D"].set_ylim(_psth_ylim)
 
