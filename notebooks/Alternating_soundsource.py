@@ -81,11 +81,6 @@ rads_y = np.sin(np.deg2rad(list(speaker_position.values())))
 # returned_degs = np.degrees(np.arctan2(rads_y, rads_x))
 # returned_degs = (returned_degs+360)%360
 
-
-# %% [markdown]
-# For the analysis i should start with per recording representation of activity per speaker position. What about Rasterplots stacked on top of each other (4), each corresponding to a different speaker.
-# For now this will happen for all recordings individually before analysis across all follows
-
 # %%
 # cell by cell sound source representation
 
@@ -197,30 +192,25 @@ if individuals_flag:
                 gridspec_kw={"width_ratios": [2.5, 3, 3, 2.5]},
                 empty_sentinel=".",  # treat "." cells as empty
             )
-
             # ----------------------------------------------------------
             # Convert the placeholder "polar" axis into a real polar axes
             # ----------------------------------------------------------
             polar_spec = axd["polar"].get_subplotspec()
             axd["polar"].remove()
             ax_polar = fig.add_subplot(polar_spec, projection="polar")
-
             # ----------------------------------------------------------
             # Loop over speakers and fill rasters, PSTHs, lineplots
             # ----------------------------------------------------------
-
             tmin, tmax = -100, 500  # example x-range (adjust as needed)
-
+            # --------------------------------------------------------------------
             for enum, key in enumerate(speakers):
                 # Named axes from the mosaic
                 ax_r = axd[f"r_{key}"]
                 ax_p = axd[f"psth_{key}"]
                 ax_l = axd[f"line_{key}"]
-
                 # Set x-limits for all time-based axes
                 for ax in (ax_r, ax_p, ax_l):
                     ax.set_xlim(tmin, tmax)
-
                 # ---------------- RASTER PLOT ----------------
                 ax_r.scatter(
                     raster_times[row_idx][key],
@@ -232,7 +222,6 @@ if individuals_flag:
                     fontsize=12,
                     weight="bold",
                 )
-
                 # ---------------- PSTH PLOT ------------------
                 ax_p.bar(
                     bins_plot,
@@ -242,48 +231,41 @@ if individuals_flag:
                     edgecolor="none",
                 )
                 ax_p.set_ylabel("Firing Rate [Hz]")
-
                 # ---------------- LINE PLOT ------------------
                 # median baseline subtract the response
                 ax_l.plot(trigger_time, baseline_subtract_whisk[row_idx, :, enum])
                 ax_l.set_ylim((-0.2, 0.8))
-
             # ----------------------------------------------------------
             # Despine + tidy Cartesian axes
             # ----------------------------------------------------------
-
             def despine(ax):
                 ax.spines["top"].set_visible(False)
                 ax.spines["right"].set_visible(False)
-
+                # --------------------------------------------------------------------
+            # --------------------------------------------------------------------
             for key in speakers:
                 despine(axd[f"r_{key}"])
                 despine(axd[f"psth_{key}"])
                 despine(axd[f"line_{key}"])
-
+                # --------------------------------------------------------------------
                 # Cleaner PSTH/line look (optional):
                 # axd[f"psth_{key}"].tick_params(axis="y", left=False, labelleft=False)
                 # axd[f"line_{key}"].tick_params(axis="y", left=False, labelleft=False)
-
             # ----------------------------------------------------------
             # POLAR PLOT: mark speaker angles & plot tuning (optional)
             # ----------------------------------------------------------
-
             angles_deg = list(speaker_position.values())
             labels = list(speaker_position.keys())
             angles_rad = np.deg2rad(angles_deg)
-
+            # --------------------------------------------------------------------
             # Angle grid with labels a/w/e/r
             ax_polar.set_thetagrids(angles_deg, angles_deg)
             ax_polar.plot(np.deg2rad(DIRECTIONS), HDRateSmooth[row_idx])
-
             # Optional: put markers at those angles (radius = 1)
             ax_polar.scatter(angles_rad, np.ones(len(angles_rad)), s=40)
-
             # Optional tuning curve:
             # rate = np.array([...])   # length 4, matching angles_deg
             # ax_polar.plot(angles_rad, rate)
-
             ax_info = axd["info"]
             ax_info.axis("off")
             infotext = f"""
@@ -296,13 +278,11 @@ if individuals_flag:
                             pValR:       {comb_table["pValR"][row_idx]:.2f}
                             binsize:     {1000 * time_bin:.2f} ms
                         """
-
             ax_info.text(0, 1, infotext, va="top")
             # ----------------------------------------------------------
             # Final layout touch
             # ----------------------------------------------------------
             fig.tight_layout()
-
             # If saving to PDF:
             pdf.savefig(fig)
             plt.close(fig)
@@ -638,10 +618,6 @@ speaker_keys = list(speakers)  # canonical order: ['a','w','e','r']
 speaker_position = {"a": 93, "w": 178, "e": 272, "r": 356}
 speaker_angles_deg = np.array([speaker_position[k] for k in speaker_keys])
 
-# %%
-print(speaker_angles_deg)
-# %%
-
 # heatmap
 im = axes[0].imshow(mean_corr_matrix, vmin=0, vmax=1, cmap="viridis")
 axes[0].set_title("Mean correlation matrix")
@@ -743,7 +719,7 @@ x = bins_plot[plot_resp_show] / 1000
 for idx, spk in enumerate(speakers):
     y = mean_psth[plot_resp_show, idx]
     sem = sd_psth[plot_resp_show, idx]
-
+    # --------------------------------------------------------------------
     ax1.plot(x, y, label=distance_label[idx])
     ax1.fill_between(x, y - sem, y + sem, alpha=0.12)
 
@@ -757,7 +733,7 @@ ax1.spines["right"].set_visible(False)
 for idx, spk in enumerate(speakers):
     y = mean_whisk[plot_resp_show_whisk, idx]
     sem = sd_psth_whisk[plot_resp_show_whisk, idx]
-
+    # --------------------------------------------------------------------
     ax2.plot(trigger_time[plot_resp_show_whisk], y, label=distance_label[idx])
     ax2.fill_between(trigger_time[plot_resp_show_whisk], y - sem, y + sem, alpha=0.12)
 
