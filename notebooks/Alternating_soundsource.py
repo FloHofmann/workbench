@@ -20,6 +20,7 @@ from scipy.stats import (
 from workbench.data.preprocess import combTableCreate, expand_dict_columns
 
 # %matplotlib QtAgg
+#plt.ion()
 
 individuals_flag = True
 
@@ -53,12 +54,12 @@ except:
     # clean and reshape the dataframe
     comb_table = pl.from_dataframe(comb_df)
     conditions = comb_table["Condition"].unique().to_list()
-
+    # --------------------------------------------------------------------
     comb_a = comb_table.filter(pl.col("Condition") == conditions[0]).drop("Condition")
     comb_b = comb_table.filter(pl.col("Condition") == conditions[1]).drop("Condition")
-
+    # --------------------------------------------------------------------
     comb_joined = comb_a.join(comb_b, on=["Animal_Id", "Cell_Id"], how="inner")
-
+    # --------------------------------------------------------------------
     comb_joined = comb_joined[
         [s.name for s in comb_joined if not (s.null_count() == comb_joined.height)]
     ]
@@ -156,7 +157,7 @@ for idx, stim in enumerate(stim_keys):
         axis=1,
         keepdims=True,
     )
-
+    # --------------------------------------------------------------------
     baseline_subtract_whisk[:, :, idx] = whisk_avg[:, :, idx] - baseline_median
 
 # reorder axis-2 from stim_keys order to canonical speakers order ['a','w','e','r']
@@ -811,7 +812,7 @@ ax.boxplot(
 colors = plt.cm.tab20(np.linspace(0, 1, n_cells))
 for i in range(n_cells):
     jitter = np.random.uniform(-0.15, 0.15, size=n_pairs)
-
+    # --------------------------------------------------------------------
     ax.scatter(
         x_positions + jitter,
         corr_pairs[i, :],
@@ -847,7 +848,7 @@ print("\nPairwise comparisons:")
 
 for i, j in itertools.combinations(range(n_pairs), 2):
     stat, p = wilcoxon(corr_pairs[:, i], corr_pairs[:, j])
-
+    # --------------------------------------------------------------------
     print(f"({xlab_pairs[i]}) vs ({xlab_pairs[j]}): p = {p:.3f}")
 
 print("-" * 70)
@@ -1032,7 +1033,7 @@ x = bins_plot[plot_resp_show] / 1000
 for idx, spk in enumerate(speakers):
     y = mean_psth[plot_resp_show, idx]
     sem = sd_psth[plot_resp_show, idx]
-
+    # --------------------------------------------------------------------
     axd["x"].plot(x, y, label=distance_label[idx])
     axd["x"].fill_between(x, y - sem, y + sem, alpha=0.12)
 
@@ -1043,7 +1044,7 @@ axd["x"].set_ylabel("Firing Rate [Hz]")
 for idx, spk in enumerate(speakers):
     y = mean_whisk[plot_resp_show_whisk, idx]
     sem = sd_psth_whisk[plot_resp_show_whisk, idx]
-
+    # --------------------------------------------------------------------
     axd["z"].plot(trigger_time[plot_resp_show_whisk], y, label=distance_label[idx])
     axd["z"].fill_between(
         trigger_time[plot_resp_show_whisk], y - sem, y + sem, alpha=0.12
@@ -1109,3 +1110,4 @@ axd["v"].set_xticklabels(
 )
 axd["v"].set_ylabel("AUC [spikes]")
 axd["v"].set_xlabel("Speaker distance to PD")
+plt.show()
