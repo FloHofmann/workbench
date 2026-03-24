@@ -7,22 +7,21 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import polars as pl
+import scikit_posthocs as sp
 import seaborn as sns
 from matplotlib.backends.backend_pdf import PdfPages
 from scipy.ndimage import gaussian_filter1d
 from scipy.stats import (
-    false_discovery_control,
     friedmanchisquare,
     gaussian_kde,
-    wilcoxon,
 )
 
 from workbench.data.preprocess import combTableCreate, expand_dict_columns
 
 # %matplotlib QtAgg
-#plt.ion()
+# plt.ion()
 
-individuals_flag = True
+individuals_flag = False
 
 # %%
 conn = sqlite3.connect(
@@ -235,6 +234,7 @@ if individuals_flag:
                 # median baseline subtract the response
                 ax_l.plot(trigger_time, baseline_subtract_whisk[row_idx, :, enum])
                 ax_l.set_ylim((-0.2, 0.8))
+
             # ----------------------------------------------------------
             # Despine + tidy Cartesian axes
             # ----------------------------------------------------------
@@ -242,6 +242,7 @@ if individuals_flag:
                 ax.spines["top"].set_visible(False)
                 ax.spines["right"].set_visible(False)
                 # --------------------------------------------------------------------
+
             # --------------------------------------------------------------------
             for key in speakers:
                 despine(axd[f"r_{key}"])
@@ -286,7 +287,7 @@ if individuals_flag:
             # If saving to PDF:
             pdf.savefig(fig)
             plt.close(fig)
-    plt.show()
+    plt.show(block=False)
 
 # %%
 # peak fr for all soundsources
@@ -319,7 +320,7 @@ for i, key in enumerate(speaker_position):
         axes[i].set_ylabel("Circular distance to speaker (deg)")
 
 plt.tight_layout()
-plt.show()
+plt.show(block=False)
 
 # %%
 resp_peak_df = pd.DataFrame(resp_peak_fr, columns=list("awer"))
@@ -344,7 +345,7 @@ plt.xlabel("Speaker")
 plt.ylabel("Max Psth")
 plt.title("max psth")
 plt.tight_layout()
-plt.show()
+plt.show(block=False)
 
 # implement friedman notest (non parametric Anova to compare the between the speaker responses but respecting the across within-cell pairing)
 stat, p = friedmanchisquare(
@@ -384,7 +385,7 @@ sns.lineplot(
     linewidth=1,
     legend=False,
 )
-plt.show()
+plt.show(block=False)
 
 # corresponding statistics printed
 fr_stat, fr_p = friedmanchisquare(
@@ -398,20 +399,12 @@ print("Max FR sorted")
 print(f"Friedman Chi square: {fr_stat:.2f}, p = {fr_p:.2f}")
 print("-" * 70)
 
-conds = [0, 1, 2, 3]
-fr_p_list = []
-for c1, c2 in itertools.combinations(conds, 2):
-    stat, p = wilcoxon(fr_resp_sorted[:, c1], fr_resp_sorted[:, c2])
-    fr_p_list.append(p)
-
-corrected_sorted_fr_p = false_discovery_control(fr_p_list)
-for a in zip(
-    itertools.combinations(
-        ["closest", "second_closest", "second_farthest", "farthest"], 2
-    ),
-    corrected_sorted_fr_p,
-):
-    print(f"{a[0][0]} vs {a[0][1]}: corrected p = {a[1]:.2f}")
+fr_labels = ["closest", "second_closest", "second_farthest", "farthest"]
+nemenyi_fr = sp.posthoc_nemenyi_friedman(fr_resp_sorted)
+for c1, c2 in itertools.combinations(range(4), 2):
+    print(
+        f"{fr_labels[c1]} vs {fr_labels[c2]}: Nemenyi p = {nemenyi_fr.iloc[c1, c2]:.3f}"
+    )
 
 print("-" * 70)
 
@@ -435,21 +428,16 @@ ax.set_xticklabels(speakers)
 sns.lineplot(
     data=auc_resp_df, x="speaker", y="auc_psth", hue="index", linewidth=1, legend=False
 )
-plt.show()
+plt.show(block=False)
 print("-" * 70)
 print("AUC unsorted")
 print(auc_stat, auc_p)
 
-conds = [0, 1, 2, 3]
-auc_p_list = []
-
-for c1, c2 in itertools.combinations(conds, 2):
-    stat, p = wilcoxon(auc_resp[:, c1], auc_resp[:, c2])
-    auc_p_list.append(p)
-
-corrected_auc_p = false_discovery_control(auc_p_list)
-for a in zip(itertools.combinations(speakers, 2), corrected_auc_p):
-    print(f"{a[0][0]} vs {a[0][1]}: corrected p = {a[1]:.2f}")
+nemenyi_auc = sp.posthoc_nemenyi_friedman(auc_resp)
+for c1, c2 in itertools.combinations(range(4), 2):
+    print(
+        f"{speakers[c1]} vs {speakers[c2]}: Nemenyi p = {nemenyi_auc.iloc[c1, c2]:.3f}"
+    )
 
 print("-" * 70)
 
@@ -480,7 +468,7 @@ sns.lineplot(
     linewidth=1,
     legend=False,
 )
-plt.show()
+plt.show(block=False)
 
 auc_stat, auc_p = friedmanchisquare(
     auc_resp_sorted[:, 0],
@@ -491,19 +479,12 @@ auc_stat, auc_p = friedmanchisquare(
 print("-" * 70)
 print("AUC Sorted")
 print(f"Friedman notest p: {auc_p:.2f}")
-auc_sort_p_list = []
-for c1, c2 in itertools.combinations(conds, 2):
-    stat, p = wilcoxon(auc_resp_sorted[:, c1], auc_resp_sorted[:, c2])
-    auc_sort_p_list.append(p)
-
-corrected_auc_sort_p = false_discovery_control(auc_sort_p_list)
-for a in zip(
-    itertools.combinations(
-        ["closest", "second_closest", "second_farthest", "farthest"], 2
-    ),
-    corrected_auc_sort_p,
-):
-    print(f"{a[0][0]} vs {a[0][1]}: corrected p = {a[1]:.2f}")
+auc_sort_labels = ["closest", "second_closest", "second_farthest", "farthest"]
+nemenyi_auc_sort = sp.posthoc_nemenyi_friedman(auc_resp_sorted)
+for c1, c2 in itertools.combinations(range(4), 2):
+    print(
+        f"{auc_sort_labels[c1]} vs {auc_sort_labels[c2]}: Nemenyi p = {nemenyi_auc_sort.iloc[c1, c2]:.3f}"
+    )
 
 print("-" * 70)
 
@@ -529,7 +510,8 @@ avg_whisker_bs = avg_whisker_sort - baseline_mean_whisk
 
 sigma = 2
 new_rate_bs_smooth = gaussian_filter1d(new_rate_bs, sigma=sigma, axis=1)
-# slice data for correlations
+# distance-sorted order (closest→farthest) is correct for correlations —
+# the analysis asks how similar responses are as a function of relative speaker distance
 response_data = new_rate_bs_smooth[:, resp_window, :]
 
 cell = 1
@@ -546,7 +528,7 @@ for speaker in range(4):
 
 plt.title(f"Cell {cell} responses")
 plt.legend()
-plt.show()
+plt.show(block=False)
 
 # %%
 n_cells = response_data.shape[0]
@@ -566,7 +548,8 @@ ax.set_xticks(range(4))
 plt.xticks(rotation=45)
 ax.set_yticks(range(4))
 
-ax.set_xticklabels(xlab)
+# axes are in distance-sorted order (closest → farthest)
+ax.set_xticklabels(xlab, rotation=45, ha="right")
 ax.set_yticklabels(xlab)
 ax.set_title("Mean PSTH correlation across cells")
 
@@ -575,7 +558,7 @@ cbar = plt.colorbar(im, ax=ax)
 cbar.set_label("Pearson r")
 
 plt.tight_layout()
-plt.show()
+plt.show(block=False)
 
 # %%
 # extract the unique correlations per cell
@@ -594,7 +577,7 @@ ax.set_title("Distribution of PSTH correlations")
 ax.set_xlim(0, 1)
 
 plt.tight_layout()
-plt.show()
+plt.show(block=False)
 
 # %%
 mean_corr_per_cell = corr_pairs.mean(axis=1)
@@ -610,22 +593,18 @@ ax.set_title("Correlation per cell")
 ax.set_ylim(0, 1)
 
 plt.tight_layout()
-plt.show()
+plt.show(block=False)
 
 # %%
 fig, axes = plt.subplots(1, 3, figsize=(15, 4))
-speaker_keys = list(speakers)  # canonical order: ['a','w','e','r']
-speaker_position = {"a": 93, "w": 178, "e": 272, "r": 356}
-speaker_angles_deg = np.array([speaker_position[k] for k in speaker_keys])
 
-# heatmap
+# heatmap — axes are in distance-sorted order (closest → farthest)
 im = axes[0].imshow(mean_corr_matrix, vmin=0, vmax=1, cmap="viridis")
 axes[0].set_title("Mean correlation matrix")
 axes[0].set_xticks(range(4))
 axes[0].set_yticks(range(4))
-speakers_deg_str = [f"{spk} °" for spk in speaker_angles]
-axes[0].set_xticklabels(speakers_deg_str)
-axes[0].set_yticklabels(speakers_deg_str)
+axes[0].set_xticklabels(distance_label, rotation=45, ha="right")
+axes[0].set_yticklabels(distance_label)
 
 plt.colorbar(im, ax=axes[0])
 
@@ -695,7 +674,7 @@ axes[2].spines["top"].set_visible(False)
 axes[2].spines["right"].set_visible(False)
 
 plt.tight_layout()
-plt.show()
+plt.show(block=False)
 mean_corr = corr_values.mean()
 std_corr = corr_values.std()
 
@@ -744,23 +723,21 @@ ax2.legend()
 ax2.spines["top"].set_visible(False)
 ax2.spines["right"].set_visible(False)
 
-plt.show()
+plt.show(block=False)
 
 # %%
 n_cells, n_spk, _ = corr_all.shape
-i_idx, j_idx = np.triu_indices(len(speaker_keys), k=1)
+i_idx, j_idx = np.triu_indices(n_spk, k=1)
 
+# label pairs by distance-rank position — i and j are rank indices (0=closest),
+# not speaker identity indices, so absolute angles must not be used here
 pair_labels = [
-    f"{speaker_angles_deg[i]}–{speaker_angles_deg[j]}" for i, j in zip(i_idx, j_idx)
+    f"{distance_label[i]} – {distance_label[j]}" for i, j in zip(i_idx, j_idx)
 ]
 
-xlab_pairs = [f"{i + 1} vs. {j + 1}" for i, j in zip(i_idx, j_idx)]
-
-pair_distances = np.abs(
-    (speaker_angles_deg[i_idx] - speaker_angles_deg[j_idx] + 180) % 360 - 180
-)
-
-sort_idx = np.argsort(pair_distances)
+# sort by rank separation: 1 = adjacent positions, 2 = two apart, 3 = opposite ends
+pair_rank_dist = j_idx - i_idx
+sort_idx = np.argsort(pair_rank_dist, kind="stable")
 
 corr_pairs = corr_pairs[:, sort_idx]
 pair_labels = [pair_labels[i] for i in sort_idx]
@@ -801,7 +778,7 @@ for i in range(n_cells):
 
 # Formatting
 ax.set_xticks(x_positions)
-ax.set_xticklabels(xlab_pairs)
+ax.set_xticklabels(pair_labels, rotation=45, ha="right")
 plt.xticks(rotation=65)
 
 ax.set_ylabel("PSTH correlation (r)")
@@ -813,19 +790,20 @@ ax.spines["top"].set_visible(False)
 ax.spines["right"].set_visible(False)
 
 plt.tight_layout()
-plt.show()
+plt.show(block=False)
 
 stat, p = friedmanchisquare(*[corr_pairs[:, i] for i in range(n_pairs)])
 
 print(f"Friedman chi² = {stat:.3f}, p = {p:.3f}")
 
 
-print("\nPairwise comparisons:")
+print("\nPairwise comparisons (Nemenyi post-hoc):")
 
+nemenyi_corr = sp.posthoc_nemenyi_friedman(corr_pairs)
 for i, j in itertools.combinations(range(n_pairs), 2):
-    stat, p = wilcoxon(corr_pairs[:, i], corr_pairs[:, j])
-    # --------------------------------------------------------------------
-    print(f"({xlab_pairs[i]}) vs ({xlab_pairs[j]}): p = {p:.3f}")
+    print(
+        f"({pair_labels[i]}) vs ({pair_labels[j]}): Nemenyi p = {nemenyi_corr.iloc[i, j]:.3f}"
+    )
 
 print("-" * 70)
 
