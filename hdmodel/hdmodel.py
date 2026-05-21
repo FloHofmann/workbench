@@ -51,7 +51,7 @@ for step, t in enumerate(time):
     # Phase 2: Slow spatially restricted component
     elif t >= t_phasic:
         decay_factor = np.exp(-(t - t_phasic) / tau_decay)
-        I_ext += A_phasic * decay_factor * np.exp(-0.5 * (theta /sigma_phasic)**2)
+        I_ext += A_phasic * decay_factor * np.exp(-0.5 * (theta / sigma_phasic) ** 2)
 
     # CANN Equation
     du = (-u + W @ r + I_ext) * (dt / tau)

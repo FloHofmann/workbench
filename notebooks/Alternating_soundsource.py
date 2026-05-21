@@ -20,7 +20,6 @@ from workbench.data.preprocess import combTableCreate, expand_dict_columns
 
 # %matplotlib QtAgg
 # plt.ion()
-
 individuals_flag = False
 
 # %%
@@ -84,7 +83,7 @@ rads_y = np.sin(np.deg2rad(list(speaker_position.values())))
 # cell by cell sound source representation
 
 half_window = 1500  # in ms
-time_bin = 0.002
+time_bin = 0.006
 nbins = int(np.round(half_window / (time_bin * 1000)))
 raster_edges = np.linspace(-half_window, half_window, nbins * 2 + 1)
 
@@ -478,7 +477,7 @@ auc_stat, auc_p = friedmanchisquare(
 )
 print("-" * 70)
 print("AUC Sorted")
-print(f"Friedman notest p: {auc_p:.2f}")
+print(f"Friedman chi-square: {auc_stat:.2f}; p: {auc_p:.2f}")
 auc_sort_labels = ["closest", "second_closest", "second_farthest", "farthest"]
 nemenyi_auc_sort = sp.posthoc_nemenyi_friedman(auc_resp_sorted)
 for c1, c2 in itertools.combinations(range(4), 2):
@@ -509,7 +508,8 @@ baseline_mean_whisk = avg_whisker_sort[:, baseline_whisk_time_idx, :].mean(
 avg_whisker_bs = avg_whisker_sort - baseline_mean_whisk
 
 sigma = 2
-new_rate_bs_smooth = gaussian_filter1d(new_rate_bs, sigma=sigma, axis=1)
+# new_rate_bs_smooth = gaussian_filter1d(new_rate_bs, sigma=sigma, axis=1)
+new_rate_bs_smooth = new_rate_bs # removed gaussian filtering for consistency with other figures
 # distance-sorted order (closest→farthest) is correct for correlations —
 # the analysis asks how similar responses are as a function of relative speaker distance
 response_data = new_rate_bs_smooth[:, resp_window, :]
