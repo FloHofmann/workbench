@@ -500,6 +500,7 @@ if __name__ == "__main__":
     print(f"  TAU_NEURAL       = {tau_neu_h:.2f} ms")
     print(f"  t_delay          = {td_h:.2f} ms")
 
+#%%
     # 4. Generate High-Resolution Visualizations
     plot_model_full(
         I_h,
@@ -562,3 +563,30 @@ if __name__ == "__main__":
     else:
         print("  Verdict: POOR fit.")
     print("==========================================\n")
+
+
+    # ==========================================
+    # VISUALIZE THE DOWNSAMPLED FIT (The "Camera's" View)
+    # ==========================================
+    plt.figure(figsize=(10, 5))
+    
+    # Plot the raw 6ms biological data
+    plt.plot(t_vivo_rel_h[vivo_mask_h], mean_vivo_rate[vivo_mask_h], label="In Vivo Data (6ms bins)", color='black', alpha=0.5, lw=2)
+
+    # Plot the smoothed biological tail (just for reference)
+    plt.plot(t_vivo_rel_h[vivo_mask_h], mean_vivo_smooth[vivo_mask_h], label="Smoothed In Vivo", color='gray', linestyle=':', lw=2)
+
+    # Plot the model AS SEEN BY THE OPTIMIZER (Downsampled)
+    plt.plot(t_vivo_rel_h[vivo_mask_h], model_at_vivo_h, label="Model (Downsampled to 6ms)", color='red', lw=2)
+    
+    plt.axvline(0, color='black', linestyle='--', alpha=0.3)
+    plt.xlim(-50, 300)
+    plt.xlabel("Time relative to stimulus (ms)")
+    plt.ylabel("Firing Rate (Hz)")
+    plt.title("The Optimizer's Perspective: Downsampled Model vs Biology")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+
+# %%
