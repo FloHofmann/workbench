@@ -310,8 +310,17 @@ def loss_temporal(params):
     ) = params
 
     t_model_rel, rates = run_model_temporal(
-        I_baseline, A_fast, A_phasic, tau_decay, J1, KAPPA, 
-        J0, U_floor, T_phasic, tau_neural, fc_stim_duration
+        I_baseline,
+        A_fast,
+        A_phasic,
+        tau_decay,
+        J1,
+        KAPPA,
+        J0,
+        U_floor,
+        T_phasic,
+        tau_neural,
+        fc_stim_duration,
     )
 
     if np.any(np.isnan(rates)) or np.any(np.isinf(rates)):
@@ -340,21 +349,21 @@ def loss_temporal(params):
     # --- THE HYBRID TARGET ---
     # Use RAW data for the startle spike, SMOOTH data for the decay tail
     hybrid_target = np.zeros_like(matched_times)
-    
+
     # Let's say the transient chaos ends around 20ms post-stimulus
-    early_mask = matched_times <= 20.0 
+    early_mask = matched_times <= 20.0
     late_mask = matched_times > 20.0
-    
+
     hybrid_target[early_mask] = mean_vivo_rate[vivo_mask][early_mask]
     hybrid_target[late_mask] = mean_vivo_smooth[vivo_mask][late_mask]
 
     # Penalty 1: Shape Error (Against the Hybrid Target)
     raw_errors = (model_at_vivo - hybrid_target) ** 2
     weights = np.ones_like(raw_errors)
-    
+
     # Tell the optimizer to care a little bit more about hitting the spike
-    weights[early_mask] = 5.0 
-    
+    weights[early_mask] = 5.0
+
     weighted_mse = np.average(raw_errors, weights=weights)
 
     # Penalty 2: Baseline Background (Keep tails silent before stimulus)
@@ -362,7 +371,23 @@ def loss_temporal(params):
     anti_pd_baseline_rate = np.mean(anti_pd_trace[baseline_mask])
     background_error = (anti_pd_baseline_rate - 0.0) ** 2
 
-    total_loss = weighted_mse + (background_error * 50.0)
+    baseline_profile = np.mean(rates[baseline_mask, :], axis=0)
+    peak = np.max(baseline_profile)
+
+    if peak > 1.0:
+        half_max = peak / 2.0
+        active_bins = np.sum(baseline_profile >= half_max)
+        fwhm_baseline = active_bins * (360.0 / N)
+    else:
+        fwhm_baseline = 360.0
+
+    fwhm_penalty = 0.0
+    if fwhm_baseline < 60.0:
+        fwhm_penalty = (60.0 - fwhm_baseline) ** 2
+    elif fwhm_baseline > 90.0:
+        fwhm_penalty = (fwhm_baseline - 90.0) ** 2
+
+    total_loss = weighted_mse + (background_error * 50.0) + (fwhm_penalty * 5.0)
 
     if np.isnan(total_loss) or np.isinf(total_loss):
         return 1e10
@@ -500,7 +525,7 @@ if __name__ == "__main__":
     print(f"  TAU_NEURAL       = {tau_neu_h:.2f} ms")
     print(f"  t_delay          = {td_h:.2f} ms")
 
-#%%
+    # %%
     # 4. Generate High-Resolution Visualizations
     plot_model_full(
         I_h,
@@ -564,29 +589,46 @@ if __name__ == "__main__":
         print("  Verdict: POOR fit.")
     print("==========================================\n")
 
-
     # ==========================================
     # VISUALIZE THE DOWNSAMPLED FIT (The "Camera's" View)
     # ==========================================
     plt.figure(figsize=(10, 5))
-    
+
     # Plot the raw 6ms biological data
-    plt.plot(t_vivo_rel_h[vivo_mask_h], mean_vivo_rate[vivo_mask_h], label="In Vivo Data (6ms bins)", color='black', alpha=0.5, lw=2)
+    plt.plot(
+        t_vivo_rel_h[vivo_mask_h],
+        mean_vivo_rate[vivo_mask_h],
+        label="In Vivo Data (6ms bins)",
+        color="black",
+        alpha=0.5,
+        lw=2,
+    )
 
     # Plot the smoothed biological tail (just for reference)
-    plt.plot(t_vivo_rel_h[vivo_mask_h], mean_vivo_smooth[vivo_mask_h], label="Smoothed In Vivo", color='gray', linestyle=':', lw=2)
+    plt.plot(
+        t_vivo_rel_h[vivo_mask_h],
+        mean_vivo_smooth[vivo_mask_h],
+        label="Smoothed In Vivo",
+        color="gray",
+        linestyle=":",
+        lw=2,
+    )
 
     # Plot the model AS SEEN BY THE OPTIMIZER (Downsampled)
-    plt.plot(t_vivo_rel_h[vivo_mask_h], model_at_vivo_h, label="Model (Downsampled to 6ms)", color='red', lw=2)
-    
-    plt.axvline(0, color='black', linestyle='--', alpha=0.3)
+    plt.plot(
+        t_vivo_rel_h[vivo_mask_h],
+        model_at_vivo_h,
+        label="Model (Downsampled to 6ms)",
+        color="red",
+        lw=2,
+    )
+
+    plt.axvline(0, color="black", linestyle="--", alpha=0.3)
     plt.xlim(-50, 300)
     plt.xlabel("Time relative to stimulus (ms)")
     plt.ylabel("Firing Rate (Hz)")
-    plt.title("The Optimizer's Perspective: Downsampled Model vs Biology")
+    plt.title("Downsampled Model vs Biology")
     plt.legend()
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
     plt.show()
-
-# %%
