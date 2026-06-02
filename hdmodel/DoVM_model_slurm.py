@@ -236,7 +236,7 @@ def make_loss(bins_plot, vivo_rate, vivo_smooth):
 # Main
 # ==========================================
 def get_cell_list():
-    data = load()
+    data = load("AD_combined_table.mat")
     df = data.df
     sr = stim_rows(df)
     hd = hd_cells(df)
