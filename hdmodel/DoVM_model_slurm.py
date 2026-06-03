@@ -116,42 +116,59 @@ def run_model_temporal(
 # ==========================================
 def compute_cell_psth(row):
     """
-    Compute firing-rate PSTH for one cell from its RasterTimes/RasterRows dicts.
+    Compute firing-rate PSTH for one cell from RasterTimes/RasterRows.
 
-    row : pandas Series with columns RasterTimes (dict), RasterRows (dict), HDAngle.
-    Returns (bins_plot, raw_psth, smoothed_psth) aligned to closest speaker.
+    Handles two formats:
+      dict  – keys are speaker labels ('a','w','e','r'); selects closest to HDAngle.
+      array – all spike times combined; uses directly (no speaker sorting).
+
+    row : pandas Series with RasterTimes, RasterRows, HDAngle columns.
+    Returns (bins_plot, raw_psth, smoothed_psth).
     """
-    raster_times_dict = row["RasterTimes"]
-    raster_rows_dict = row["RasterRows"]
-    hd_angle = float(row["HDAngle"])
+    raster_times = row["RasterTimes"]
+    raster_rows  = row["RasterRows"]
+    hd_angle     = float(row["HDAngle"])
 
-    stim_keys = list(raster_times_dict.keys())
-    stim_key_to_idx = {k: i for i, k in enumerate(stim_keys)}
+    if isinstance(raster_times, dict):
+        # ── dict path: speaker-keyed rasters ─────────────────────────────
+        stim_keys       = list(raster_times.keys())
+        stim_key_to_idx = {k: i for i, k in enumerate(stim_keys)}
 
-    valid_speakers = [k for k in SPEAKERS if k in stim_key_to_idx]
-    if not valid_speakers:
-        raise ValueError(f"No known speaker keys found in RasterTimes: {stim_keys}")
+        valid_speakers = [k for k in SPEAKERS if k in stim_key_to_idx]
+        if not valid_speakers:
+            raise ValueError(f"No known speaker keys in RasterTimes: {stim_keys}")
 
-    speaker_idx = [stim_key_to_idx[k] for k in valid_speakers]
+        speaker_idx = [stim_key_to_idx[k] for k in valid_speakers]
+        cell_rate   = np.zeros((len(RASTER_EDGES) - 1, len(stim_keys)))
 
-    cell_rate = np.zeros((len(RASTER_EDGES) - 1, len(stim_keys)))
-    for j in stim_keys:
-        times = raster_times_dict[j]
-        rows_j = raster_rows_dict[j]
-        if len(times) == 0:
-            continue
-        counts, _ = np.histogram(times, bins=RASTER_EDGES)
-        n_trials = np.max(rows_j)
-        if n_trials > 0:
-            cell_rate[:, stim_key_to_idx[j]] = counts / (n_trials * TIME_BIN)
+        for j in stim_keys:
+            times  = raster_times[j]
+            rows_j = raster_rows[j]
+            if len(times) == 0:
+                continue
+            counts, _ = np.histogram(times, bins=RASTER_EDGES)
+            n_trials  = int(np.max(rows_j))
+            if n_trials > 0:
+                cell_rate[:, stim_key_to_idx[j]] = counts / (n_trials * TIME_BIN)
 
-    cell_rate = cell_rate[:, speaker_idx]
+        cell_rate = cell_rate[:, speaker_idx]
 
-    speaker_angles = np.array([SPEAKER_POSITION[k] for k in valid_speakers])
-    diff = hd_angle - speaker_angles
-    wrapped = (diff + 180) % 360 - 180
-    idx_sorted = np.argsort(np.abs(wrapped))
-    cell_psth = cell_rate[:, idx_sorted[0]]
+        speaker_angles = np.array([SPEAKER_POSITION[k] for k in valid_speakers])
+        diff           = hd_angle - speaker_angles
+        wrapped        = (diff + 180) % 360 - 180
+        idx_sorted     = np.argsort(np.abs(wrapped))
+        cell_psth      = cell_rate[:, idx_sorted[0]]
+
+    else:
+        # ── array path: flat spike-time array (no speaker separation) ────
+        times    = np.asarray(raster_times).flatten()
+        rows_arr = np.asarray(raster_rows).flatten()
+        n_trials = int(np.max(rows_arr)) if rows_arr.size > 0 else 0
+        if n_trials == 0 or times.size == 0:
+            cell_psth = np.zeros(len(RASTER_EDGES) - 1)
+        else:
+            counts, _ = np.histogram(times, bins=RASTER_EDGES)
+            cell_psth = counts / (n_trials * TIME_BIN)
 
     cell_smooth = gaussian_filter1d(cell_psth.astype(float), sigma=SMOOTH_SIGMA)
     return BINS_PLOT.copy(), cell_psth, cell_smooth
