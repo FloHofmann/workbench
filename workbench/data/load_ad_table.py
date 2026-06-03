@@ -161,7 +161,10 @@ def _deref(f: h5py.File, ref) -> object:
         keys = list(obj.keys())
         if "data" in keys:
             return _deref(f, obj["data"])
-        return _deref(f, obj[keys[0]]) if keys else None
+        if len(keys) == 1:
+            return _deref(f, obj[keys[0]])
+        # Multi-field MATLAB struct → return as dict
+        return {k: _deref(f, obj[k]) for k in keys} if keys else None
 
     arr = obj[:]
 
