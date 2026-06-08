@@ -51,14 +51,12 @@ def run_model_temporal(
     tau_neural,
     fc_stim_duration,
 ):
-    """Run CANN with DoVM connectivity and fully dynamic temporal/spatial parameters."""
+    """Run CANN with VM connectivity and fully dynamic temporal/spatial parameters."""
     W_local = (J1 * np.exp(KAPPA * (COS_D_THETA - 1.0)) - J0) / N
 
     u = 40.0 * np.maximum(0, np.cos(THETA))
     r = np.maximum(0, u)
     rates = np.zeros((len(TIME), N))
-
-    sigma_phasic_rad = np.deg2rad(SIGMA_PHASIC)
 
     for step, t in enumerate(TIME):
         I_ext = np.ones(N) * I_baseline
@@ -69,7 +67,7 @@ def run_model_temporal(
 
         elif t >= T_phasic:
             decay = np.exp(-(t - T_phasic) / tau_decay)
-            I_ext += A_phasic * decay * np.exp(-0.5 * (THETA / sigma_phasic_rad) ** 2)
+            I_ext += A_phasic * decay # exclusion of spatial component * np.exp(-0.5 * (THETA / sigma_phasic_rad) ** 2)
 
         u += (-u + W_local @ r + I_ext) * (DT / tau_neural)
         u = np.maximum(U_floor, u)
@@ -196,7 +194,7 @@ def plot_model_full(
     ax4.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    plt.show()
+    plt.show(block=False)
 
 
 # ==========================================
@@ -371,6 +369,19 @@ def loss_temporal(params):
     anti_pd_baseline_rate = np.mean(anti_pd_trace[baseline_mask])
     background_error = (anti_pd_baseline_rate - 0.0) ** 2
 
+    # --- NEW PENALTY 3: Phasic Anti-PD Silence ---
+    # We require the 180° cell to be completely vacant during the late rebound.
+    # T_phasic is absolute time, but t_model_rel is relative to T_STIM (100 ms).
+    T_phasic_rel = T_phasic - 100 
+    phasic_mask = (t_model_rel >= T_phasic_rel) & (t_model_rel <= WIN_HI)
+    
+    if phasic_mask.sum() > 0:
+        # We square the trace to aggressively penalize any spikes above 0 Hz
+        anti_pd_phasic_error = np.mean(anti_pd_trace[phasic_mask] ** 2)
+    else:
+        anti_pd_phasic_error = 0.0
+
+    # Calculate spatial FWHM penalty (as before)
     baseline_profile = np.mean(rates[baseline_mask, :], axis=0)
     peak = np.max(baseline_profile)
 
@@ -387,7 +398,14 @@ def loss_temporal(params):
     elif fwhm_baseline > 90.0:
         fwhm_penalty = (fwhm_baseline - 90.0) ** 2
 
-    total_loss = weighted_mse + (background_error * 50.0) + (fwhm_penalty * 5.0)
+    # --- TOTAL LOSS ---
+    # We weight the new phasic error heavily (50.0) to act as a strict biological clamp
+    total_loss = (
+        weighted_mse 
+        + (background_error * 50.0) 
+        + (fwhm_penalty * 5.0) 
+        + (anti_pd_phasic_error * 50.0)
+    )
 
     if np.isnan(total_loss) or np.isinf(total_loss):
         return 1e10
