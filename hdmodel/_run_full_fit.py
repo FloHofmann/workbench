@@ -1,5 +1,6 @@
-"""Throwaway single-stage JOINT fit runner (background). All 20 params at once."""
+"""Throwaway single-stage JOINT fit runner (background). All params at once."""
 import json
+import pathlib
 import numpy as np
 from scipy.optimize import differential_evolution, minimize
 import optimization_engine as oe
@@ -14,6 +15,19 @@ def main():
     args = (bins, vr, vs)
 
     best = None
+    # Anchor on the previous saved best (if any): polish from it so a run never
+    # REGRESSES just because this batch of seeds missed the good basin.
+    prev = pathlib.Path("_full_fit_result.json")
+    if prev.exists():
+        try:
+            x0 = [json.load(open(prev))["params"][k] for k in oe.PARAM_NAMES]
+            ra = minimize(oe.loss_joint, x0=x0, bounds=oe.JOINT_BOUNDS, args=args,
+                          method="L-BFGS-B", options={"maxiter": 600})
+            print(f"  anchor (prev best): loss {ra.fun:.1f}", flush=True)
+            best = ra
+        except (KeyError, ValueError):
+            pass  # param set changed (different dims) -> skip anchor
+
     for seed in range(N_SEEDS):
         r = differential_evolution(
             oe.loss_joint, oe.JOINT_BOUNDS, args=args, seed=seed, maxiter=400,

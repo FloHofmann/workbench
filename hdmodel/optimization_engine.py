@@ -27,9 +27,10 @@ HD_SHAPE = np.exp(KAPPA_HD * (np.cos(THETA) - 1.0))
 # count tractable; only its midpoint V_half_h and gain g_h are free.
 K_H_SLOPE = 8.0
 
-# Fast charge time constant (ms) for the Ca-activated disinhibition gate s_dis:
-# it must build during the brief I_T burst, then decay with the fitted tau_dis.
-TAU_DIS_ON = 15.0
+# Rise time constant (ms) of the disinhibition gate. SLOW (not instantaneous) so
+# the gate LAGS the I_T burst and peaks ~after the rebound -> it lifts the tail
+# without inflating the rebound peak. Decay is the fitted tau_dis (the tail).
+DELAY_TAU = 40.0
 
 # Stage-specific (short) time grids. Each eval only needs the window the loss reads.
 TIME_STAGE1 = np.arange(T_BURN_IN, 50.0, DT)   # steady state + (-150..-50) variance window
@@ -82,7 +83,10 @@ STAGE2_BOUNDS = [
                       #   the rebound goes global (anti-PD fires). Keeping A_fast
                       #   comparable to recurrent gain preserves PD's advantage
                       #   through the flash -> PD-selective rebound.
-    (1.0, 5.0),       # fc_stim_duration (brief flash so SC can't be input-driven)
+    (2.0, 14.0),      # fc_stim_duration. Widened: at 5 ms the FC was a sharp spike
+                      #   that crashed by ~13 ms; the data FC rises to a peak at
+                      #   ~18 ms. Still <<the 30-300 ms SC, so the input cannot
+                      #   explain the SC (emergence argument intact).
     (3.0, 12.0),      # stim_delay (conduction latency, ms; data FC at ~8-10 ms)
     (-50.0, -20.0),   # reversal_potential (hyperpolarization clamp floor)
     # --- I_T (T-type Ca) : sharp post-inhibitory rebound ---
@@ -201,14 +205,15 @@ def _simulate_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I
     m_h = np.zeros(N)
 
     # Slow Ca-activated disinhibition (the thalamic slow afterdepolarization),
-    # PER CELL. The I_T rebound burst (Ca entry) drives a slow gate s_dis that
-    # SUPPRESSES the inhibition that cell receives -> raises the bump setpoint ->
-    # the elevated SC tail. Driven by I_T so it is (a) SELECTIVE -- only the
-    # rebounding bump cells, the antipode never bursts -> stays inhibited; and
-    # (b) TRANSIENT -- I_T shuts off after the burst, so no positive-feedback
-    # latch. Asymmetric kinetics: FAST charge during the brief burst, SLOW decay
-    # (tau_dis) so the disinhibition (and the elevated bump) outlasts the burst.
-    # Changing the E/I balance evades the homeostasis that cancels added drive.
+    # PER CELL. s_dis is a bounded [0,1] gate driven by the cell's I_T rebound
+    # burst; it SUPPRESSES the inhibition that cell receives -> raises the bump
+    # setpoint -> the elevated SC tail. Driven by I_T so it is (a) SELECTIVE -- only
+    # the rebounding bump cells, the antipode never bursts -> stays inhibited;
+    # (b) TRANSIENT -- I_T shuts off after the burst, no latch; and (c) DELAYED --
+    # the gate rises SLOWLY (DELAY_TAU) so it peaks ~after the rebound, lifting the
+    # TAIL without inflating the rebound peak, then decays slowly (tau_dis = the
+    # tail duration). Changing the E/I balance evades the homeostasis that cancels
+    # added drive.
     s_dis = np.zeros(N)
 
     I_ext_base = I_baseline + I_HD * HD_SHAPE  # tonic upstream HD drive (loop-invariant)
@@ -260,17 +265,17 @@ def _simulate_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I
         if stim_onset <= t < stim_end:
             I_ext = I_ext_base + A_fast
 
-        # Ca-activated disinhibition (per cell). drive = saturating function of
-        # the cell's I_T burst (Ca proxy). Fast charge (TAU_DIS_ON) while the burst
-        # flows, slow decay (tau_dis) after -> s_dis holds, so the suppressed
-        # inhibition keeps the bump elevated for hundreds of ms. disinhib in
-        # [floor,1] scales DOWN that cell's inhibition. Floored for stability.
+        # Ca-activated disinhibition (per cell). ca integrates the cell's I_T burst
+        # and leaks with tau_dis; disinhib in [floor,1] scales DOWN that cell's
+        # inhibition as a saturating function of accumulated Ca. Because ca is an
+        # INTEGRAL it peaks after the burst -> boosts the tail, not the rebound
+        # peak. Floored for stability.
         if t < stim_onset:
             disinhib = np.ones(N)
         else:
             drive = np.minimum(1.0, np.maximum(0.0, I_T / 200.0))
-            tau_d = np.where(drive > s_dis, TAU_DIS_ON, tau_dis)
-            s_dis += (drive - s_dis) * (DT / tau_d)
+            tau_s = np.where(drive > s_dis, DELAY_TAU, tau_dis)  # slow rise / slow decay
+            s_dis += (drive - s_dis) * (DT / tau_s)
             disinhib = np.maximum(0.2, 1.0 - g_dis * s_dis)
 
         du_I = -u_I + W_EI * (K_E @ r_E)
@@ -449,10 +454,12 @@ def loss_stage2(params, stage1_frozen, bins_plot, vivo_rate, vivo_smooth):
     # Raw data for the FC startle spike (<=20 ms), smooth data for the SC tail.
     early = matched_times <= 20.0
     target = np.where(early, vivo_rate[vivo_mask], vivo_smooth[vivo_mask])
-    # Weight: FC spike 5x; the elevated SC tail (80-300 ms) 3x so the optimizer
-    # actually fits the slow I_h-sustained decay instead of letting it sag to
-    # baseline (it is a big, low-amplitude region the default weight under-cares).
+    # Weights: FC spike 5x; the REBOUND peak (25-75 ms) 4x so the optimizer fits
+    # the SC amplitude (~101 Hz) instead of letting the bump re-formation overshoot
+    # to ~140 (that region was weight 1 = under-cared); the elevated SC tail
+    # (80-300 ms) 3x so it fits the slow decay instead of sagging to baseline.
     weights = np.where(early, 5.0, 1.0)
+    weights = np.where((matched_times > 25.0) & (matched_times <= 75.0), 4.0, weights)
     weights = np.where((matched_times > 80.0) & (matched_times <= 300.0), 3.0, weights)
     weighted_mse = np.average((model_at_vivo - target) ** 2, weights=weights)
 
