@@ -1,0 +1,549 @@
+import numpy as np
+from numba import njit
+
+# Constants
+N = 120  # 3 degrees per cell
+THETA = np.linspace(-np.pi, np.pi, N, endpoint=False)
+
+DT = 0.2  # temporal resolution in ms
+T_BURN_IN = -300  # 300 ms for the attractor to settle
+T_END = 800
+TIME = np.arange(T_BURN_IN, T_END, DT)
+T_STIM = 0  # timepoint of the stimulation (aligned with loss masks)
+
+# Create a Matrix of Delta Theta with 1 being identity and -1 being theta - pi
+COS_D_THETA = np.cos(THETA[:, None] - THETA[None, :])
+
+# Upstream HD input (LMN/DTN -> AD). AD thalamus does not generate the HD signal;
+# it inherits a tonic, head-direction-tuned drive from upstream. Shape is a fixed
+# von-Mises bump at PD (0 deg); its amplitude I_HD is FITTED (Stage 1). Because it
+# is tuned (peaks at PD, ~0 at the antipode) it can be strong without the +-130 deg
+# secondary bumps / anti-PD firing that capped I_baseline -> it supplies bump height
+# AND pins the attractor so it recovers to baseline after the stimulus.
+KAPPA_HD = 2.0  # fixed HD tuning width (~70-90 deg FWHM)
+HD_SHAPE = np.exp(KAPPA_HD * (np.cos(THETA) - 1.0))
+
+# I_h (HCN) activation slope. Fixed (not optimized) to keep the Stage-2 param
+# count tractable; only its midpoint V_half_h and gain g_h are free.
+K_H_SLOPE = 8.0
+
+# Fast charge time constant (ms) for the Ca-activated disinhibition gate s_dis:
+# it must build during the brief I_T burst, then decay with the fitted tau_dis.
+TAU_DIS_ON = 15.0
+
+# Stage-specific (short) time grids. Each eval only needs the window the loss reads.
+TIME_STAGE1 = np.arange(T_BURN_IN, 50.0, DT)   # steady state + (-150..-50) variance window
+TIME_STAGE2 = np.arange(T_BURN_IN, 550.0, DT)  # burn-in + stim + stable window (100..500)
+
+# Tuned interneuron ring (replaces the global-uniform u_I + MEXICAN_FRAC hack).
+# Excitation kernel exp(KAPPA_E*(cos-1)) is NARROW; inhibition kernel
+# exp(KAPPA_I*(cos-1)) is BROAD (KAPPA_I < KAPPA_E). Narrow excite minus broad
+# inhibit = a genuine Mexican-hat from real connectivity -> single bump + lateral
+# competition, no artificial DC subtraction. Inhibition is no longer spatially
+# flat, so anti-PD suppression during the rebound is a real network effect.
+STAGE1_BOUNDS = [
+    (5.0, 50.0),   # tau_E (excitatory time constant)
+    (2.0, 20.0),   # tau_I (interneuron time constant)
+    (3.0, 15.0),   # I_baseline (capped LOW: uniform drive lifts ALL cells -> if it
+                   #   sets the bump height it also drives distal cells over thresh
+                   #   = the +-130 deg secondary bumps. Capping it forces the 40 Hz
+                   #   peak to come from RECURRENT J1 (localized) instead, and keeps
+                   #   far cells subthreshold so the surround needs only gentle
+                   #   inhibition -- which the post-dip rebound also needs.)
+    (1.0, 50.0),   # J1 (recurrent excitation amplitude)
+    (3.0, 30.0),   # KAPPA_E (excitation width; larger = narrower)
+    (2.0, 20.0),   # W_IE (inhibition amp, I->E). One knob serves baseline shape,
+                   #   the evoked dip (needs feedback inhibition to crash), the
+                   #   rebound shape, AND anti-PD silence -- these conflict, so it
+                   #   is optimized JOINTLY with the stim params (loss_joint), where
+                   #   the data MSE penalizes the late-spike regime directly.
+    (0.5, 1.5),    # KAPPA_I (inhibition width; SMALL = broad). Capped BROAD: the
+                   #   inhibition must reach the far field (+-130 deg) or distal
+                   #   cells fire = secondary bumps AND anti-PD leaks in the SC.
+                   #   Forcing broad inhibition fixes both; the optimizer would not
+                   #   reliably pick it. KAPPA_E (narrow) > KAPPA_I guaranteed.
+    (1.0, 15.0),   # W_EI (E->I drive gain)
+    (0.0, 25.0),   # I_HD (upstream HD drive amplitude; tuned at PD -> sets bump
+                   #   height + pins recovery without secondary bumps)
+]
+
+# Stage 2 fits two intrinsic thalamic currents whose interaction *generates* the
+# slow component (SC) rebound (no injected SC):
+#   I_T (T-type Ca): m_T (fast activation) * h_T (slow inactivation) * (E_Ca - u_E)
+#                    -> sharp post-inhibitory rebound (~30-50 ms onset).
+#   I_h (HCN):       additive g_h * m_h, m_h slow -> long depolarizing tail.
+# FC (A_fast) is kept a BRIEF flash so the input cannot explain the 30-300 ms SC.
+# stim_delay = sensory conduction latency: the in-vivo FC starts ~10 ms after the
+# speaker fires, so the model's flash (and everything downstream) is shifted by it
+# to align with the data; without it the sharp FC spike is mis-registered.
+STAGE2_BOUNDS = [
+    (100.0, 800.0),   # A_fast (FC input drive). Capped LOW: a huge flash saturates
+                      #   all rates -> uniform -> the recurrent bump is erased ->
+                      #   the rebound goes global (anti-PD fires). Keeping A_fast
+                      #   comparable to recurrent gain preserves PD's advantage
+                      #   through the flash -> PD-selective rebound.
+    (1.0, 5.0),       # fc_stim_duration (brief flash so SC can't be input-driven)
+    (3.0, 12.0),      # stim_delay (conduction latency, ms; data FC at ~8-10 ms)
+    (-50.0, -20.0),   # reversal_potential (hyperpolarization clamp floor)
+    # --- I_T (T-type Ca) : sharp post-inhibitory rebound ---
+    (5.0, 80.0),      # g_T (T-type conductance)
+    (-5.0, 10.0),     # V_half_T (gate midpoint; LOW so I_T activates as u_E
+                      #   recovers and DRIVES the rebound, not just boosts it late)
+    (3.0, 15.0),      # k_T (gate slope)
+    (8.0, 35.0),      # tau_hT (de-inactivation tc; capped FAST so h_T charges
+                      #   during the brief dip -> rebound fires right after it, not
+                      #   ~40 ms later. Real T-type kinetics are fast.)
+    (80.0, 200.0),    # E_Ca (Ca reversal; high + so I_T is depolarizing, no latch)
+    # --- I_h (HCN) : slow depolarizing tail (additive, no latch) ---
+    (2.0, 60.0),      # g_h (HCN conductance; raised so I_h can lift the tail ~+50)
+    (-30.0, 10.0),    # V_half_h (activation midpoint)
+    (3.0, 15.0),      # tau_h_on  (FAST HCN activation -> the gate charges ~fully
+                      #   during the brief deep dip, not just ~40%)
+    (200.0, 900.0),   # tau_h_off (SLOW HCN deactivation -> the elevated SC tail
+                      #   persists to ~400 ms, matching the data's slow decay)
+    # --- slow disinhibition (reduced TRN inhibition post-burst) ---
+    (0.0, 0.8),       # g_dis (disinhibition strength; fraction of inhibition removed
+                      #   at saturation -> raises the bump setpoint for the tail)
+    (150.0, 1000.0),  # tau_dis (disinhibition decay -> sets the SC tail duration;
+                      #   raised so the tail can persist past 150 ms to ~300 ms)
+]
+
+PARAM_NAMES = [
+    "tau_E",
+    "tau_I",
+    "I_baseline",
+    "J1",
+    "KAPPA_E",
+    "W_IE",
+    "KAPPA_I",
+    "W_EI",
+    "I_HD",
+    "A_fast",
+    "fc_stim_duration",
+    "stim_delay",
+    "reversal_potential",
+    "g_T",
+    "V_half_T",
+    "k_T",
+    "tau_hT",
+    "E_Ca",
+    "g_h",
+    "V_half_h",
+    "tau_h_on",
+    "tau_h_off",
+    "g_dis",
+    "tau_dis",
+]
+
+
+# ---------------------------------------------------------------------------
+# Core simulators.
+#
+# Recurrent excitation is a circular convolution of a cos-tuning kernel with
+# r_E. Since the kernel only depends on (theta_i - theta_j), the full weight
+# matrix is W_full = J1 * exp(KAPPA*(cos(dtheta) - 1)) / N, built once from the
+# precomputed COS_D_THETA.
+# ---------------------------------------------------------------------------
+@njit(fastmath=True, cache=True)
+def _simulate_idle(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I_HD, time):
+    # Tuned connectivity: narrow excitation kernel, broad inhibition kernel.
+    # Each interneuron is co-tuned with the local E population (K_E), and feeds
+    # back inhibition through a BROAD kernel (K_I, KAPPA_I < KAPPA_E). The net
+    # effect (narrow excite - broad inhibit) is a Mexican-hat built from real
+    # connectivity -> single bump + lateral competition, no DC subtraction.
+    K_E = np.exp(KAPPA_E * (COS_D_THETA - 1.0)) / N  # excitation / E->I drive
+    K_I = np.exp(KAPPA_I * (COS_D_THETA - 1.0)) / N  # broad I->E inhibition
+
+    u_E = 40.0 * np.exp(KAPPA_E * (np.cos(THETA) - 1.0))
+    r_E = u_E.copy()
+    u_I = W_EI * (K_E @ r_E)
+    r_I = np.maximum(0.0, u_I)
+
+    I_ext_base = I_baseline + I_HD * HD_SHAPE  # tonic upstream HD drive (loop-invariant)
+
+    rates = np.zeros((len(time), N))
+    for step in range(len(time)):
+        du_I = -u_I + W_EI * (K_E @ r_E)
+        u_I += du_I * (DT / tau_I)
+        r_I = np.maximum(0.0, u_I)
+
+        du_E = -u_E + J1 * (K_E @ r_E) - W_IE * (K_I @ r_I) + I_ext_base
+        u_E += du_E * (DT / tau_E)
+
+        # Bound the RATE (output), not the voltage. Clipping u_E at a ceiling
+        # would erase the bump's spatial ordering when cells saturate; keeping
+        # u_E unclamped preserves PD > off-bump even when both rates hit 500.
+        u_E = np.maximum(u_E, -100.0)
+        r_E = np.minimum(500.0, np.maximum(0.0, u_E))
+        rates[step, :] = r_E
+
+    return time, rates
+
+
+@njit(fastmath=True, cache=True)
+def _simulate_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I_HD,
+                   A_fast, fc_stim_duration, stim_delay, reversal_potential,
+                   g_T, V_half_T, k_T, tau_hT, E_Ca,
+                   g_h, V_half_h, tau_h_on, tau_h_off,
+                   g_dis, tau_dis, time):
+    # Tuned connectivity (see _simulate_idle): narrow excite, broad inhibit.
+    K_E = np.exp(KAPPA_E * (COS_D_THETA - 1.0)) / N
+    K_I = np.exp(KAPPA_I * (COS_D_THETA - 1.0)) / N
+
+    u_E = 40.0 * np.exp(KAPPA_E * (np.cos(THETA) - 1.0))
+    r_E = u_E.copy()
+    u_I = W_EI * (K_E @ r_E)
+    r_I = np.maximum(0.0, u_I)
+
+    # Intrinsic-current gates. h_T = T-type inactivation (slow, de-inactivated by
+    # hyperpolarization), m_h = HCN activation (slow). Both start at 0.
+    h_T = np.zeros(N)
+    m_h = np.zeros(N)
+
+    # Slow Ca-activated disinhibition (the thalamic slow afterdepolarization),
+    # PER CELL. The I_T rebound burst (Ca entry) drives a slow gate s_dis that
+    # SUPPRESSES the inhibition that cell receives -> raises the bump setpoint ->
+    # the elevated SC tail. Driven by I_T so it is (a) SELECTIVE -- only the
+    # rebounding bump cells, the antipode never bursts -> stays inhibited; and
+    # (b) TRANSIENT -- I_T shuts off after the burst, so no positive-feedback
+    # latch. Asymmetric kinetics: FAST charge during the brief burst, SLOW decay
+    # (tau_dis) so the disinhibition (and the elevated bump) outlasts the burst.
+    # Changing the E/I balance evades the homeostasis that cancels added drive.
+    s_dis = np.zeros(N)
+
+    I_ext_base = I_baseline + I_HD * HD_SHAPE  # tonic upstream HD drive (loop-invariant)
+    # Conduction latency: the flash (and the whole evoked cascade) starts at
+    # stim_onset, not T_STIM, so model FC aligns with the in-vivo FC at ~+10 ms.
+    stim_onset = T_STIM + stim_delay
+    stim_end = stim_onset + fc_stim_duration
+
+    rates = np.zeros((len(time), N))
+    for step in range(len(time)):
+        t = time[step]
+
+        # Intrinsic currents are GATED OFF (gates frozen at 0, currents 0) until
+        # the flash actually arrives (stim_onset). Pre-stim the off-bump cells are
+        # tonically suppressed; if their gates charged during the 300 ms burn-in a
+        # standing depolarizing current (strongest at the antipode) would invert
+        # the attractor to +-180 before the cue (see gotcha 2b). Post-onset the
+        # synchronous flash->crash de-inactivates I_T / activates I_h -> phasic.
+        if t >= stim_onset:
+            # I_T (T-type Ca). m_T: fast activation (instantaneous, ->1 on
+            # depolarization). h_T: slow inactivation (->1 when hyperpolarized
+            # below V_half_T = de-inactivation by the post-flash crash). Their
+            # product is transient: after the crash h_T is high but u_E still
+            # low (m_T~0); as the bump recovers through V_half_T, m_T turns on
+            # while h_T is still up -> a sharp rebound; then u_E high -> h_T
+            # decays -> I_T shuts off. Ohmic with high E_Ca so always depolarizing.
+            m_T = 1.0 / (1.0 + np.exp(-(u_E - V_half_T) / k_T))
+            h_inf = 1.0 / (1.0 + np.exp((u_E - V_half_T) / k_T))
+            h_T += (h_inf - h_T) * (DT / tau_hT)
+            I_T = g_T * m_T * h_T * (E_Ca - u_E)
+
+            # I_h (HCN). Slow activation by hyperpolarization; additive (NOT
+            # ohmic) so it cannot latch in this compressed membrane scale
+            # (gotcha 2). tau_h large -> slow depolarizing tail (the SC decay).
+            mh_inf = 1.0 / (1.0 + np.exp((u_E - V_half_h) / K_H_SLOPE))
+            # Asymmetric HCN kinetics (the real channel's time constant is
+            # voltage-dependent): FAST activation when hyperpolarized (mh_inf > m_h
+            # = charging) so the gate builds during the brief shallow dip; SLOW
+            # deactivation when depolarized (decaying) so the depolarizing tail
+            # persists for hundreds of ms -> the long elevated SC decay.
+            tau_mh = np.where(mh_inf > m_h, tau_h_on, tau_h_off)
+            m_h += (mh_inf - m_h) * (DT / tau_mh)
+            I_h = g_h * m_h
+        else:
+            I_T = np.zeros(N)
+            I_h = np.zeros(N)
+
+        I_ext = I_ext_base
+        if stim_onset <= t < stim_end:
+            I_ext = I_ext_base + A_fast
+
+        # Ca-activated disinhibition (per cell). drive = saturating function of
+        # the cell's I_T burst (Ca proxy). Fast charge (TAU_DIS_ON) while the burst
+        # flows, slow decay (tau_dis) after -> s_dis holds, so the suppressed
+        # inhibition keeps the bump elevated for hundreds of ms. disinhib in
+        # [floor,1] scales DOWN that cell's inhibition. Floored for stability.
+        if t < stim_onset:
+            disinhib = np.ones(N)
+        else:
+            drive = np.minimum(1.0, np.maximum(0.0, I_T / 200.0))
+            tau_d = np.where(drive > s_dis, TAU_DIS_ON, tau_dis)
+            s_dis += (drive - s_dis) * (DT / tau_d)
+            disinhib = np.maximum(0.2, 1.0 - g_dis * s_dis)
+
+        du_I = -u_I + W_EI * (K_E @ r_E)
+        u_I += du_I * (DT / tau_I)
+        r_I = np.minimum(500.0, np.maximum(0.0, u_I))
+
+        du_E = -u_E + J1 * (K_E @ r_E) - disinhib * W_IE * (K_I @ r_I) + I_ext + I_T + I_h
+        u_E += du_E * (DT / tau_E)
+
+        # Bound the RATE, not the voltage (see _simulate_idle): an unclamped u_E
+        # ceiling preserves the bump's spatial ordering through the FC saturation
+        # and the crash, so PD stays > off-bump and recovers FIRST -> a fast yet
+        # PD-selective rebound. reversal_potential is the hyperpolarization floor.
+        u_E = np.maximum(u_E, reversal_potential)
+        r_E = np.minimum(500.0, np.maximum(0.0, u_E))
+        rates[step, :] = r_E
+
+    return time, rates
+
+
+# ---------------------------------------------------------------------------
+# Public wrappers. F_matrix / F_inv_matrix kept in the signature for backward
+# compatibility with existing notebook calls, but are no longer used.
+# ---------------------------------------------------------------------------
+def run_model_idle(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I_HD,
+                   F_matrix=None, F_inv_matrix=None):
+    return _simulate_idle(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I_HD, TIME)
+
+
+def run_model_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I_HD,
+                   A_fast, fc_stim_duration, stim_delay, reversal_potential,
+                   g_T, V_half_T, k_T, tau_hT, E_Ca,
+                   g_h, V_half_h, tau_h_on, tau_h_off,
+                   g_dis, tau_dis,
+                   F_matrix=None, F_inv_matrix=None):
+    return _simulate_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I_HD,
+                          A_fast, fc_stim_duration, stim_delay, reversal_potential,
+                          g_T, V_half_T, k_T, tau_hT, E_Ca,
+                          g_h, V_half_h, tau_h_on, tau_h_off,
+                          g_dis, tau_dis, TIME)
+
+
+# Precompute the index/angle anchors used by the losses.
+_IDX_0 = int(np.argmin(np.abs(THETA)))
+_IDX_180 = int(np.argmin(np.abs(THETA - np.pi)))
+_EXP_THETA = np.exp(1j * THETA)  # for smooth circular center-of-mass
+NEAR_PD = np.abs(THETA) <= (np.pi / 4)  # cells within +-45 deg of PD (the rebound population)
+OFF_LOBE = np.abs(THETA) > (np.pi / 3)  # cells beyond +-60 deg of 0 (split / secondary-bump territory)
+
+
+def _circular_center(profile):
+    """Smooth, differentiable bump center (radians) via circular mean.
+
+    Replaces argmax-based center penalties, which are integer-valued and
+    create flat plateaus that stall differential evolution.
+    """
+    return np.angle(np.sum(profile * _EXP_THETA))
+
+
+# implementation of the loss function
+def loss_stage1(params):
+    tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I_HD = params
+
+    _, rates = _simulate_idle(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I_HD, TIME_STAGE1)
+    if not np.all(np.isfinite(rates)):
+        return 1e6
+
+    steady_state_profile = rates[-1, :]
+    peak_fr = np.max(steady_state_profile)
+
+    loss_val = 0.0
+    loss_val += (peak_fr - 40.0) ** 2
+
+    if peak_fr > 1.0:
+        half_max = peak_fr / 2.0
+        active_bins = np.sum(steady_state_profile >= half_max)
+        fwhm = active_bins * (360.0 / len(THETA))
+    else:
+        fwhm = 0.0
+
+    if fwhm < 60.0:
+        loss_val += (60.0 - fwhm) ** 2 * 10.0
+    elif fwhm > 90.0:
+        loss_val += (90.0 - fwhm) ** 2 * 10.0
+
+    loss_val += (steady_state_profile[_IDX_180] - 0.0) ** 2 * 50.0
+
+    # Smooth center penalty (radians off 0) instead of integer argmax distance.
+    center = _circular_center(steady_state_profile) if peak_fr > 1.0 else 0.0
+    loss_val += (center ** 2) * 500.0
+
+    # Single-bump enforcement: any firing outside the central +-60 deg lobe is a
+    # split / secondary bump. Penalize that energy relative to the total.
+    if peak_fr > 1.0:
+        off_lobe = np.sum(steady_state_profile[OFF_LOBE])
+        total = np.sum(steady_state_profile) + 1e-9
+        loss_val += (off_lobe / total) ** 2 * 500.0
+
+        # Kill discrete secondary bumps (e.g. the +-130 deg lobes seen at
+        # baseline): the strongest off-lobe cell must be a small fraction of the
+        # main peak. These arise when the inhibition kernel (KAPPA_I) is too
+        # narrow to reach the far field, so I_baseline drives distal cells over
+        # threshold. Heavy weight pushes DE toward BROADER inhibition (smaller
+        # KAPPA_I) that suppresses the whole surround. The energy-fraction term
+        # above tolerates a few small lobes; this targets their peak directly.
+        secondary_peak = np.max(steady_state_profile[OFF_LOBE])
+        loss_val += (secondary_peak / peak_fr) ** 2 * 800.0
+
+    # TIME_STAGE1 runs to +50 ms; the variance window is fully inside it.
+    middle_mask = (TIME_STAGE1 > -150) & (TIME_STAGE1 < -50)
+    pd_cell_middle = rates[middle_mask, _IDX_0][::10]
+    loss_val += np.var(pd_cell_middle) * 1000.0
+
+    return float(loss_val)
+
+
+# Stage-2 fit window (ms relative to stim). Stim is at t=0 in both model and data.
+# NB: the data SC tail stays elevated (~90->60 Hz) out to ~400 ms but the model's
+# I_h can't yet sustain it (the shallow dip doesn't hyperpolarize long enough to
+# charge the slow m_h gate) -- a separate frontier. Keep the window at 300 ms so
+# the unfittable 300-500 ms tail doesn't drag the fit; revisit when I_h kinetics
+# (asymmetric fast-charge / slow-decay) are reworked.
+WIN_LO, WIN_HI = -50.0, 300.0
+
+
+def loss_stage2(params, stage1_frozen, bins_plot, vivo_rate, vivo_smooth):
+    """Data-driven Stage-2 loss.
+
+    Fits the model PD trace to the REAL population PSTH (vivo_rate / vivo_smooth
+    from vivo_target.load_vivo_psth) via a hybrid raw-early / smooth-late MSE.
+    The SC shape is NOT prescribed here -- it must emerge from the I_T/I_h
+    channel dynamics in _simulate_stim. Only light *structural* regularizers are
+    added (anti-PD silence, single bump, bump survival) so the optimizer can't
+    match the trace by destroying the attractor.
+    """
+    (
+        A_fast, fc_stim_duration, stim_delay, reversal_potential,
+        g_T, V_half_T, k_T, tau_hT, E_Ca,
+        g_h, V_half_h, tau_h_on, tau_h_off,
+        g_dis, tau_dis,
+    ) = params
+
+    tau_E = stage1_frozen["tau_E"]
+    tau_I = stage1_frozen["tau_I"]
+    I_baseline = stage1_frozen["I_baseline"]
+    J1 = stage1_frozen["J1"]
+    KAPPA_E = stage1_frozen["KAPPA_E"]
+    W_IE = stage1_frozen["W_IE"]
+    KAPPA_I = stage1_frozen["KAPPA_I"]
+    W_EI = stage1_frozen["W_EI"]
+    I_HD = stage1_frozen["I_HD"]
+
+    t_model, rates = _simulate_stim(
+        tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I_HD,
+        A_fast, fc_stim_duration, stim_delay, reversal_potential,
+        g_T, V_half_T, k_T, tau_hT, E_Ca,
+        g_h, V_half_h, tau_h_on, tau_h_off,
+        g_dis, tau_dis, TIME_STAGE2,
+    )
+
+    if not np.all(np.isfinite(rates)):
+        return 1e6
+
+    pd_trace = rates[:, _IDX_0]
+    anti_pd_rate = rates[:, _IDX_180]
+
+    # --- CORE: PD trace vs real PSTH (hybrid target, early-weighted) ---
+    bins_plot = np.asarray(bins_plot, dtype=np.float64)
+    vivo_mask = (bins_plot >= WIN_LO) & (bins_plot <= WIN_HI)
+    matched_times = bins_plot[vivo_mask]
+    if matched_times.size < 3:
+        return 1e6
+
+    model_at_vivo = np.interp(matched_times, t_model, pd_trace)
+
+    # Raw data for the FC startle spike (<=20 ms), smooth data for the SC tail.
+    early = matched_times <= 20.0
+    target = np.where(early, vivo_rate[vivo_mask], vivo_smooth[vivo_mask])
+    # Weight: FC spike 5x; the elevated SC tail (80-300 ms) 3x so the optimizer
+    # actually fits the slow I_h-sustained decay instead of letting it sag to
+    # baseline (it is a big, low-amplitude region the default weight under-cares).
+    weights = np.where(early, 5.0, 1.0)
+    weights = np.where((matched_times > 80.0) & (matched_times <= 300.0), 3.0, weights)
+    weighted_mse = np.average((model_at_vivo - target) ** 2, weights=weights)
+
+    loss_val = weighted_mse
+
+    # --- MECHANISTIC CONSTRAINT: a real but SHALLOW inhibitory dip ---
+    # PD must dip clearly below baseline ~15-20 ms post-stim (the inhibitory gap
+    # that hyperpolarizes the membrane and de-inactivates I_T -> the rebound
+    # prerequisite). But it must NOT crash to 0: zeroing PD erases the recurrent
+    # bump, which then has to silently re-form before the rebound can fire -> a
+    # late (~80 ms) rebound. A shallow dip keeps the bump alive (the membrane
+    # still crashes negative -> I_T de-inactivates while the rate stays ~15-25),
+    # so the rebound is both fast (~55 ms) AND PD-selective. The data PSTH floors
+    # at ~25 Hz here, so this also matches biology better than forcing 0.
+    # Guard only enforces that a dip EXISTS (min < ~25 Hz); the MSE sets its exact
+    # depth. Window tied to stim_onset so the FC->dip gap is fixed as stim_delay
+    # floats to the true conduction latency.
+    stim_onset = T_STIM + stim_delay
+    # (i) a dip must EXIST: PD drops below ~30 Hz somewhere in the early window.
+    dip_mask = (t_model > stim_onset + 5.0) & (t_model < stim_onset + 22.0)
+    if dip_mask.sum() > 0:
+        dip_min = np.min(pd_trace[dip_mask])
+        loss_val += (np.maximum(0.0, dip_min - 30.0)) ** 2 * 20.0
+    # (ii) NB: an earlier "bump-alive floor" (PD >= 15 Hz through the dip) was
+    # removed. It forced a SHALLOW dip (PD membrane stays positive), which stops
+    # HCN/I_h from ever activating (mh_inf ~ 0 when u > 0) -> no slow tail. The
+    # non-saturating-FC fix already preserves the bump's spatial memory through a
+    # DEEP brief dip, so PD can crash negative (HCN charges) and still re-form fast
+    # and PD-selectively. The dip-exists guard above + the MSE keep the dip sane.
+
+    # --- STRUCTURAL REGULARIZERS ---
+    # (a) anti-PD must stay near-silent during the SC window (40-300 ms): the
+    #     rebound is a PD-only phenomenon. The channels de-inactivate the antipode
+    #     too (it also crashed), so the reformed PD bump must laterally suppress
+    #     it -> moderate weight pushes the optimizer to a winner-take-all rebound.
+    SC_mask = (t_model > 40.0) & (t_model < 300.0)
+    loss_val += np.mean(anti_pd_rate[SC_mask] ** 2) * 10.0
+
+    # (b) RECOVERY (one-sided floor only): the attractor must not SAG below
+    #     baseline in the late window (the old pathology: PD collapsing to ~16 Hz
+    #     once the channels drained, with nothing to hold the bump). The upstream
+    #     HD drive (I_HD) supplies that sustaining drive. We penalize ONLY
+    #     under-recovery (< ~30 Hz) -- NOT a target level -- because the data does
+    #     NOT return to baseline by 300 ms: it keeps a long elevated SC tail
+    #     (~90->60 Hz over 100-400 ms), which the data MSE (to 300 ms) + the slow
+    #     I_h tail must track. A two-sided target here would fight that tail.
+    recov_mask = (t_model > 200.0) & (t_model < 500.0)
+    if recov_mask.sum() > 0:
+        recov_pd = np.mean(pd_trace[recov_mask])
+        loss_val += (np.maximum(0.0, 30.0 - recov_pd)) ** 2 * 8.0
+
+    # single-bump topology over the stable late window (keep the attractor intact).
+    stable_mask = (t_model > 100.0) & (t_model < 500.0)
+    late_profile_mean = np.mean(rates[stable_mask, :], axis=0)
+    late_peak = np.max(late_profile_mean)
+    loss_val += (np.maximum(0.0, 10.0 - late_peak)) ** 2 * 50.0
+
+    if late_peak > 1.0:
+        center = _circular_center(late_profile_mean)
+        loss_val += (center ** 2) * 50.0
+        off_lobe = np.sum(late_profile_mean[OFF_LOBE])
+        total = np.sum(late_profile_mean) + 1e-9
+        loss_val += (off_lobe / total) ** 2 * 50.0
+
+    if np.isnan(loss_val) or np.isinf(loss_val):
+        return 1e6
+    return float(loss_val)
+
+
+# Joint search space: the 8 attractor/geometry params + the 12 stim/channel params.
+JOINT_BOUNDS = STAGE1_BOUNDS + STAGE2_BOUNDS
+
+
+def loss_joint(params, bins_plot, vivo_rate, vivo_smooth, w_baseline=4.0):
+    """Single-stage joint loss = baseline geometry + data-driven evoked fit.
+
+    Optimizes ALL 20 params at once so the shared inhibition (W_IE/KAPPA_I/W_EI)
+    is chosen against every constraint together. The two-stage version froze the
+    geometry blind to the stim demands, and no frozen W_IE could satisfy baseline
+    + dip + smooth rebound + anti-PD silence at once. Here the data MSE in
+    loss_stage2 directly penalizes the late-spike rebound regime that strong
+    inhibition produces, so the optimizer is pulled to the compromise.
+
+    Reuses loss_stage1 (baseline regularizers, no data) and loss_stage2 (evoked
+    MSE + dip + anti-PD + bump survival) unchanged -> one source of truth.
+    """
+    s1 = params[:9]
+    s2 = params[9:]
+    base = loss_stage1(s1)
+    if base >= 1e6:
+        return 1e6
+    frozen = dict(zip(PARAM_NAMES[:9], s1))
+    evoked = loss_stage2(s2, frozen, bins_plot, vivo_rate, vivo_smooth)
+    return float(w_baseline * base + evoked)

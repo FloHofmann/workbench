@@ -375,12 +375,12 @@ def loss_temporal(params):
     T_phasic_rel = T_phasic - 100 
     phasic_mask = (t_model_rel >= T_phasic_rel) & (t_model_rel <= WIN_HI)
     
-    if phasic_mask.sum() > 0:
-        # We square the trace to aggressively penalize any spikes above 0 Hz
-        anti_pd_phasic_error = np.mean(anti_pd_trace[phasic_mask] ** 2)
-    else:
-        anti_pd_phasic_error = 0.0
-
+#    if phasic_mask.sum() > 0:
+#        # We square the trace to aggressively penalize any spikes above 0 Hz
+#        anti_pd_phasic_error = np.mean(anti_pd_trace[phasic_mask] ** 2)
+#    else:
+#        anti_pd_phasic_error = 0.0
+#
     # Calculate spatial FWHM penalty (as before)
     baseline_profile = np.mean(rates[baseline_mask, :], axis=0)
     peak = np.max(baseline_profile)
@@ -404,7 +404,7 @@ def loss_temporal(params):
         weighted_mse 
         + (background_error * 50.0) 
         + (fwhm_penalty * 5.0) 
-        + (anti_pd_phasic_error * 50.0)
+        #+ (anti_pd_phasic_error * 50.0)
     )
 
     if np.isnan(total_loss) or np.isinf(total_loss):

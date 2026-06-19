@@ -83,7 +83,7 @@ rads_y = np.sin(np.deg2rad(list(speaker_position.values())))
 # cell by cell sound source representation
 
 half_window = 1500  # in ms
-time_bin = 0.006
+time_bin = 0.009
 nbins = int(np.round(half_window / (time_bin * 1000)))
 raster_edges = np.linspace(-half_window, half_window, nbins * 2 + 1)
 
@@ -340,6 +340,7 @@ sns.lineplot(
     legend=False,
 )
 
+plt.gca().margins(y=0.3)
 plt.xlabel("Speaker")
 plt.ylabel("Max Psth")
 plt.title("max psth")
@@ -376,6 +377,7 @@ ax.set_xticks([0, 1, 2, 3])
 ax.set_ylabel("Fr [Hz]")
 ax.set_xlabel("Speaker position relative to PD")
 ax.set_xticklabels(["closest", "second closest", "second farthest", "farthest"])
+ax.margins(y=0.3)
 sns.lineplot(
     data=fr_resp_df_sort,
     x="speaker",
@@ -424,6 +426,7 @@ plt.title("auc unsorted")
 ax = sns.boxplot(data=auc_resp_df, x="speaker", y="auc_psth")
 ax.set_xticks([0, 1, 2, 3])
 ax.set_xticklabels(speakers)
+ax.margins(y=0.3)
 sns.lineplot(
     data=auc_resp_df, x="speaker", y="auc_psth", hue="index", linewidth=1, legend=False
 )
@@ -459,6 +462,7 @@ plt.title("auc sorted")
 ax = sns.boxplot(data=auc_resp_df_sort, x="speaker", y="auc_psth")
 ax.set_xticks([0, 1, 2, 3])
 ax.set_xticklabels(["closest", "second_closest", "second_farthest", "farthest"])
+ax.margins(y=0.3)
 sns.lineplot(
     data=auc_resp_df_sort,
     x="speaker",
@@ -669,7 +673,7 @@ axes[2].scatter(
 )
 axes[2].set_xticks([])
 axes[2].set_title("Mean correlation per cell")
-axes[2].set_ylim(0, 1)
+axes[2].margins(y=0.3)
 axes[2].spines["top"].set_visible(False)
 axes[2].spines["right"].set_visible(False)
 
@@ -784,7 +788,7 @@ plt.xticks(rotation=65)
 ax.set_ylabel("PSTH correlation (r)")
 ax.set_xlabel("Speaker pair")
 
-ax.set_ylim(0, 1)
+ax.margins(y=0.3)
 
 ax.spines["top"].set_visible(False)
 ax.spines["right"].set_visible(False)
@@ -1036,6 +1040,7 @@ axd["y"].set_xticklabels(
 )
 axd["y"].set_ylabel("Peak FR [Hz]")
 axd["y"].set_xlabel("Speaker distance to PD")
+axd["y"].margins(y=0.3)
 
 # panel v — AUC sorted by speaker distance
 sns.boxplot(
@@ -1064,4 +1069,5 @@ axd["v"].set_xticklabels(
 )
 axd["v"].set_ylabel("AUC [spikes]")
 axd["v"].set_xlabel("Speaker distance to PD")
+axd["v"].margins(y=0.3)
 plt.show()
