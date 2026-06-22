@@ -58,11 +58,13 @@ STAGE1_BOUNDS = [
                    #   rebound shape, AND anti-PD silence -- these conflict, so it
                    #   is optimized JOINTLY with the stim params (loss_joint), where
                    #   the data MSE penalizes the late-spike regime directly.
-    (0.5, 1.5),    # KAPPA_I (inhibition width; SMALL = broad). Capped BROAD: the
-                   #   inhibition must reach the far field (+-130 deg) or distal
-                   #   cells fire = secondary bumps AND anti-PD leaks in the SC.
-                   #   Forcing broad inhibition fixes both; the optimizer would not
-                   #   reliably pick it. KAPPA_E (narrow) > KAPPA_I guaranteed.
+    (0.9, 1.3),    # KAPPA_I (inhibition width; SMALL = broad). Pinned to the
+                   #   SHARPENING band: too broad (~0.5, near-global) gives no
+                   #   spatial surround -> the post-stim bump gets stuck WIDE (a
+                   #   stable broad attractor, FWHM ~213 deg, never recovers); too
+                   #   sharp (>~1.3) breaks anti-PD selectivity. ~1.0 gives a real
+                   #   Mexican-hat surround that re-narrows the bump to ~baseline
+                   #   while keeping anti-PD ~0 and no +-130 deg secondary bumps.
     (1.0, 15.0),   # W_EI (E->I drive gain)
     (0.0, 25.0),   # I_HD (upstream HD drive amplitude; tuned at PD -> sets bump
                    #   height + pins recovery without secondary bumps)
@@ -455,12 +457,14 @@ def loss_stage2(params, stage1_frozen, bins_plot, vivo_rate, vivo_smooth):
     early = matched_times <= 20.0
     target = np.where(early, vivo_rate[vivo_mask], vivo_smooth[vivo_mask])
     # Weights: FC spike 5x; the REBOUND peak (25-75 ms) 4x so the optimizer fits
-    # the SC amplitude (~101 Hz) instead of letting the bump re-formation overshoot
-    # to ~140 (that region was weight 1 = under-cared); the elevated SC tail
-    # (80-300 ms) 3x so it fits the slow decay instead of sagging to baseline.
+    # the SC amplitude (~101 Hz) and doesn't overshoot. The elevated SC tail is
+    # left at 1x ON PURPOSE: the data tail (~75 Hz @200 ms) is only reachable with
+    # weak/broad inhibition, which keeps the bump pathologically wide. We chose a
+    # SHARP recovering attractor (KAPPA_I pinned ~1.0) instead, so the tail will
+    # under-shoot; over-weighting it would fight the width recovery. The recovery
+    # floor below still prevents the PD trace from sagging BELOW baseline.
     weights = np.where(early, 5.0, 1.0)
     weights = np.where((matched_times > 25.0) & (matched_times <= 75.0), 4.0, weights)
-    weights = np.where((matched_times > 80.0) & (matched_times <= 300.0), 3.0, weights)
     weighted_mse = np.average((model_at_vivo - target) ** 2, weights=weights)
 
     loss_val = weighted_mse
@@ -523,6 +527,16 @@ def loss_stage2(params, stage1_frozen, bins_plot, vivo_rate, vivo_smooth):
         off_lobe = np.sum(late_profile_mean[OFF_LOBE])
         total = np.sum(late_profile_mean) + 1e-9
         loss_val += (off_lobe / total) ** 2 * 50.0
+
+        # RECOVERY of bump WIDTH: the attractor must re-narrow, not stay in the
+        # stable BROAD state (FWHM ~213 deg) the I_T rebound kicks it into. The
+        # KAPPA_I sharpening band (pinned in the bounds) does the structural work;
+        # this is a GENTLE nudge (low weight) penalizing late FWHM > ~100 deg so
+        # the optimizer prefers the recovering regime without chasing degenerate
+        # narrow spikes (a strong penalty did exactly that).
+        half = late_peak / 2.0
+        late_fwhm = np.sum(late_profile_mean >= half) * (360.0 / len(THETA))
+        loss_val += (np.maximum(0.0, late_fwhm - 100.0)) ** 2 * 0.2
 
     if np.isnan(loss_val) or np.isinf(loss_val):
         return 1e6

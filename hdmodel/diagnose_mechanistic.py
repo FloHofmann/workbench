@@ -34,11 +34,18 @@ def _r2(model, target):
     return 1.0 - ss_res / ss_tot if ss_tot > 0 else np.nan
 
 
-def diagnose(stage1_frozen, stage2_params, vivo=None, title=""):
-    """Plot model-vs-data overlay + heatmap + ablation. Returns R^2 of PD fit."""
+def diagnose(stage1_frozen, stage2_params, vivo=None, title="", t_lo=None, t_hi=None):
+    """Plot model-vs-data overlay + heatmap + ablation. Returns R^2 of PD fit.
+
+    t_lo / t_hi set the plotting window (ms); default to the fit window
+    (oe.WIN_LO/WIN_HI). Pass e.g. t_hi=700 to watch the attractor recover. R^2 is
+    always computed on the fit window, not the plotting window.
+    """
     if vivo is None:
         vivo = load_vivo_psth()
     bins, vrate, vsmooth = vivo
+    t_lo = oe.WIN_LO if t_lo is None else t_lo
+    t_hi = oe.WIN_HI if t_hi is None else t_hi
 
     t, rates = _run(stage1_frozen, stage2_params)
     pd = rates[:, oe._IDX_0]
@@ -53,21 +60,23 @@ def diagnose(stage1_frozen, stage2_params, vivo=None, title=""):
     _, rates_abl = _run(stage1_frozen, abl)
     pd_abl = rates_abl[:, oe._IDX_0]
 
-    # R^2 of PD trace vs raw PSTH on the fit window.
+    # R^2 of PD trace vs raw PSTH on the FIT window (independent of plot window).
     win = (bins >= oe.WIN_LO) & (bins <= oe.WIN_HI)
     model_at_vivo = np.interp(bins[win], t, pd)
     r2 = _r2(model_at_vivo, vrate[win])
+
+    vwin = (bins >= t_lo) & (bins <= t_hi)  # vivo data over the plot window
 
     fig = plt.figure(figsize=(13, 9))
     gs = fig.add_gridspec(2, 2)
 
     # (1) PD model vs real PSTH
     ax = fig.add_subplot(gs[0, 0])
-    ax.plot(bins[win], vrate[win], color="0.4", lw=1.5, label="in vivo (raw)")
-    ax.plot(bins[win], vsmooth[win], color="0.4", ls="--", lw=1.5, label="in vivo (smooth)")
+    ax.plot(bins[vwin], vrate[vwin], color="0.4", lw=1.5, label="in vivo (raw)")
+    ax.plot(bins[vwin], vsmooth[vwin], color="0.4", ls="--", lw=1.5, label="in vivo (smooth)")
     ax.plot(t, pd, color="crimson", lw=2.2, label="model PD (0deg)")
     ax.plot(t, pd_abl, color="crimson", ls=":", lw=1.5, label="model PD, g_T=g_h=0 (ablation)")
-    ax.set_xlim(oe.WIN_LO, oe.WIN_HI)
+    ax.set_xlim(t_lo, t_hi)
     ax.set_xlabel("time rel. stim (ms)"); ax.set_ylabel("firing rate (Hz)")
     ax.set_title(f"PD vs biology   R2={r2:.3f}")
     ax.legend(fontsize=8); ax.grid(alpha=0.3)
@@ -77,21 +86,29 @@ def diagnose(stage1_frozen, stage2_params, vivo=None, title=""):
     ax.plot(t, pd, color="crimson", lw=2, label="PD (0deg)")
     ax.plot(t, pd90, color="orange", lw=2, label="90deg")
     ax.plot(t, anti, color="navy", lw=2, label="anti-PD (180deg)")
-    ax.set_xlim(oe.WIN_LO, oe.WIN_HI)
+    ax.set_xlim(t_lo, t_hi)
     ax.set_xlabel("time rel. stim (ms)"); ax.set_ylabel("firing rate (Hz)")
     ax.set_title("directional traces (SC should be PD-only)")
     ax.legend(fontsize=8); ax.grid(alpha=0.3)
 
-    # (3) space-time heatmap
+    # (3) space-time heatmap (+ FWHM-over-time overlay to read out recovery)
     ax = fig.add_subplot(gs[1, 0])
-    tm = (t >= oe.WIN_LO) & (t <= oe.WIN_HI)
+    tm = (t >= t_lo) & (t <= t_hi)
     im = ax.imshow(
         rates[tm, :].T, aspect="auto", origin="lower",
-        extent=[oe.WIN_LO, oe.WIN_HI, -180, 180], cmap="magma", vmin=0, vmax=100,
+        extent=[t_lo, t_hi, -180, 180], cmap="magma", vmin=0, vmax=100,
     )
+    # FWHM(t) (deg) traced on the same axis -> see if the bump re-narrows.
+    deg = np.rad2deg(oe.THETA)
+    fwhm = np.array([
+        ((row >= row.max() / 2).sum() * 360.0 / oe.N) if row.max() > 1 else 0.0
+        for row in rates[tm, :]
+    ])
+    ax.plot(t[tm], fwhm - 180, color="cyan", lw=1.2, alpha=0.8, label="FWHM (deg)")
     ax.axvline(0, color="w", ls="--", alpha=0.5)
     ax.set_xlabel("time rel. stim (ms)"); ax.set_ylabel("preferred dir (deg)")
-    ax.set_title("network activity")
+    ax.set_title("network activity (cyan = bump FWHM)")
+    ax.legend(fontsize=7, loc="upper right")
     fig.colorbar(im, ax=ax, label="Hz")
 
     # (4) channel decomposition: I_T-only vs I_h-only rebound contribution
@@ -104,7 +121,7 @@ def diagnose(stage1_frozen, stage2_params, vivo=None, title=""):
     ax.plot(t, r_it[:, oe._IDX_0], color="seagreen", lw=1.6, label="I_T only (g_h=0)")
     ax.plot(t, r_ih[:, oe._IDX_0], color="purple", lw=1.6, label="I_h only (g_T=0)")
     ax.plot(t, pd_abl, color="0.5", ls=":", lw=1.4, label="neither")
-    ax.set_xlim(oe.WIN_LO, oe.WIN_HI)
+    ax.set_xlim(t_lo, t_hi)
     ax.set_xlabel("time rel. stim (ms)"); ax.set_ylabel("PD firing rate (Hz)")
     ax.set_title("channel decomposition (timescale separation)")
     ax.legend(fontsize=8); ax.grid(alpha=0.3)
