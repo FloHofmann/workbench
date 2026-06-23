@@ -32,6 +32,20 @@ K_H_SLOPE = 8.0
 # without inflating the rebound peak. Decay is the fitted tau_dis (the tail).
 DELAY_TAU = 40.0
 
+# Half-saturation of the recurrent gate on I_T (in units of recurrent excitation
+# J1*(K_E@r_E)). The rebound only expresses where a cell receives recurrent drive
+# (= it is part of the bump). Off-bump cells de-inactivate (h_T high from the
+# crash) but get ~0 recurrent input -> no I_T -> no rebound -> they stay silent,
+# so the rebound is spatially CONFINED to the bump and the attractor re-converges
+# instead of dissolving/broadening from a global rebound.
+REC_HALF = 10.0
+
+# Global (untuned) inhibition proportional to TOTAL excitatory activity is a FITTED
+# Stage-1 param (W_GLOBAL). The broad attractor state has MORE total activity than
+# the sharp one, so global inhibition destabilizes it -> the ring becomes monostable
+# (single sharp bump) and the post-stim rebound relaxes back to baseline width.
+# Biophysically a broadly-projecting / TRN feedback inhibition.
+
 # Stage-specific (short) time grids. Each eval only needs the window the loss reads.
 TIME_STAGE1 = np.arange(T_BURN_IN, 50.0, DT)   # steady state + (-150..-50) variance window
 TIME_STAGE2 = np.arange(T_BURN_IN, 550.0, DT)  # burn-in + stim + stable window (100..500)
@@ -68,6 +82,8 @@ STAGE1_BOUNDS = [
     (1.0, 15.0),   # W_EI (E->I drive gain)
     (0.0, 25.0),   # I_HD (upstream HD drive amplitude; tuned at PD -> sets bump
                    #   height + pins recovery without secondary bumps)
+    (0.0, 12.0),   # W_GLOBAL (global inhibition ~ total activity -> monostable:
+                   #   destabilizes the broad post-stim state so the bump recovers)
 ]
 
 # Stage 2 fits two intrinsic thalamic currents whose interaction *generates* the
@@ -124,6 +140,7 @@ PARAM_NAMES = [
     "KAPPA_I",
     "W_EI",
     "I_HD",
+    "W_GLOBAL",
     "A_fast",
     "fc_stim_duration",
     "stim_delay",
@@ -151,7 +168,8 @@ PARAM_NAMES = [
 # precomputed COS_D_THETA.
 # ---------------------------------------------------------------------------
 @njit(fastmath=True, cache=True)
-def _simulate_idle(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I_HD, time):
+def _simulate_idle(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I_HD,
+                   W_GLOBAL, time):
     # Tuned connectivity: narrow excitation kernel, broad inhibition kernel.
     # Each interneuron is co-tuned with the local E population (K_E), and feeds
     # back inhibition through a BROAD kernel (K_I, KAPPA_I < KAPPA_E). The net
@@ -173,7 +191,8 @@ def _simulate_idle(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I
         u_I += du_I * (DT / tau_I)
         r_I = np.maximum(0.0, u_I)
 
-        du_E = -u_E + J1 * (K_E @ r_E) - W_IE * (K_I @ r_I) + I_ext_base
+        du_E = (-u_E + J1 * (K_E @ r_E) - W_IE * (K_I @ r_I)
+                - W_GLOBAL * (np.sum(r_E) / N) + I_ext_base)
         u_E += du_E * (DT / tau_E)
 
         # Bound the RATE (output), not the voltage. Clipping u_E at a ceiling
@@ -188,6 +207,7 @@ def _simulate_idle(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I
 
 @njit(fastmath=True, cache=True)
 def _simulate_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I_HD,
+                   W_GLOBAL,
                    A_fast, fc_stim_duration, stim_delay, reversal_potential,
                    g_T, V_half_T, k_T, tau_hT, E_Ca,
                    g_h, V_half_h, tau_h_on, tau_h_off,
@@ -228,6 +248,11 @@ def _simulate_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I
     for step in range(len(time)):
         t = time[step]
 
+        # Recurrent excitation each cell receives (= bump membership). Computed
+        # once: it both drives u_E and GATES I_T (rec_gate) so the rebound is
+        # confined to the bump.
+        rec_E = J1 * (K_E @ r_E)
+
         # Intrinsic currents are GATED OFF (gates frozen at 0, currents 0) until
         # the flash actually arrives (stim_onset). Pre-stim the off-bump cells are
         # tonically suppressed; if their gates charged during the 300 ms burn-in a
@@ -245,7 +270,11 @@ def _simulate_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I
             m_T = 1.0 / (1.0 + np.exp(-(u_E - V_half_T) / k_T))
             h_inf = 1.0 / (1.0 + np.exp((u_E - V_half_T) / k_T))
             h_T += (h_inf - h_T) * (DT / tau_hT)
-            I_T = g_T * m_T * h_T * (E_Ca - u_E)
+            # Recurrent gate: I_T expresses only where recurrent drive exists (the
+            # bump). Off-bump cells have rec_E ~ 0 -> rec_gate ~ 0 -> no rebound,
+            # so it stays spatially confined and the attractor re-converges.
+            rec_gate = rec_E / (rec_E + REC_HALF)
+            I_T = g_T * m_T * h_T * (E_Ca - u_E) * rec_gate
 
             # I_h (HCN). Slow activation by hyperpolarization; additive (NOT
             # ohmic) so it cannot latch in this compressed membrane scale
@@ -284,7 +313,8 @@ def _simulate_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I
         u_I += du_I * (DT / tau_I)
         r_I = np.minimum(500.0, np.maximum(0.0, u_I))
 
-        du_E = -u_E + J1 * (K_E @ r_E) - disinhib * W_IE * (K_I @ r_I) + I_ext + I_T + I_h
+        du_E = (-u_E + rec_E - disinhib * W_IE * (K_I @ r_I)
+                - W_GLOBAL * (np.sum(r_E) / N) + I_ext + I_T + I_h)
         u_E += du_E * (DT / tau_E)
 
         # Bound the RATE, not the voltage (see _simulate_idle): an unclamped u_E
@@ -303,17 +333,20 @@ def _simulate_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I
 # compatibility with existing notebook calls, but are no longer used.
 # ---------------------------------------------------------------------------
 def run_model_idle(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I_HD,
-                   F_matrix=None, F_inv_matrix=None):
-    return _simulate_idle(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I_HD, TIME)
+                   W_GLOBAL, F_matrix=None, F_inv_matrix=None):
+    return _simulate_idle(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I_HD,
+                          W_GLOBAL, TIME)
 
 
 def run_model_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I_HD,
+                   W_GLOBAL,
                    A_fast, fc_stim_duration, stim_delay, reversal_potential,
                    g_T, V_half_T, k_T, tau_hT, E_Ca,
                    g_h, V_half_h, tau_h_on, tau_h_off,
                    g_dis, tau_dis,
                    F_matrix=None, F_inv_matrix=None):
     return _simulate_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I_HD,
+                          W_GLOBAL,
                           A_fast, fc_stim_duration, stim_delay, reversal_potential,
                           g_T, V_half_T, k_T, tau_hT, E_Ca,
                           g_h, V_half_h, tau_h_on, tau_h_off,
@@ -339,9 +372,10 @@ def _circular_center(profile):
 
 # implementation of the loss function
 def loss_stage1(params):
-    tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I_HD = params
+    tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I_HD, W_GLOBAL = params
 
-    _, rates = _simulate_idle(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I_HD, TIME_STAGE1)
+    _, rates = _simulate_idle(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I_HD,
+                              W_GLOBAL, TIME_STAGE1)
     if not np.all(np.isfinite(rates)):
         return 1e6
 
@@ -429,9 +463,11 @@ def loss_stage2(params, stage1_frozen, bins_plot, vivo_rate, vivo_smooth):
     KAPPA_I = stage1_frozen["KAPPA_I"]
     W_EI = stage1_frozen["W_EI"]
     I_HD = stage1_frozen["I_HD"]
+    W_GLOBAL = stage1_frozen["W_GLOBAL"]
 
     t_model, rates = _simulate_stim(
         tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I_HD,
+        W_GLOBAL,
         A_fast, fc_stim_duration, stim_delay, reversal_potential,
         g_T, V_half_T, k_T, tau_hT, E_Ca,
         g_h, V_half_h, tau_h_on, tau_h_off,
@@ -456,15 +492,14 @@ def loss_stage2(params, stage1_frozen, bins_plot, vivo_rate, vivo_smooth):
     # Raw data for the FC startle spike (<=20 ms), smooth data for the SC tail.
     early = matched_times <= 20.0
     target = np.where(early, vivo_rate[vivo_mask], vivo_smooth[vivo_mask])
-    # Weights: FC spike 5x; the REBOUND peak (25-75 ms) 4x so the optimizer fits
-    # the SC amplitude (~101 Hz) and doesn't overshoot. The elevated SC tail is
-    # left at 1x ON PURPOSE: the data tail (~75 Hz @200 ms) is only reachable with
-    # weak/broad inhibition, which keeps the bump pathologically wide. We chose a
-    # SHARP recovering attractor (KAPPA_I pinned ~1.0) instead, so the tail will
-    # under-shoot; over-weighting it would fight the width recovery. The recovery
-    # floor below still prevents the PD trace from sagging BELOW baseline.
+    # Weights: FC spike 5x; the REBOUND peak (25-75 ms) 4x (fit SC amplitude, no
+    # overshoot); the elevated SC tail (80-300 ms) 3x. With the RECURRENT-GATED
+    # I_T the rebound (and the I_T-driven disinhibition) is confined to the bump,
+    # so the tail no longer requires bump-wide weak inhibition -> we can ask for
+    # both the tail AND a sharp recovering attractor (KAPPA_I sharp + FWHM penalty).
     weights = np.where(early, 5.0, 1.0)
     weights = np.where((matched_times > 25.0) & (matched_times <= 75.0), 4.0, weights)
+    weights = np.where((matched_times > 80.0) & (matched_times <= 300.0), 3.0, weights)
     weighted_mse = np.average((model_at_vivo - target) ** 2, weights=weights)
 
     loss_val = weighted_mse
@@ -528,15 +563,16 @@ def loss_stage2(params, stage1_frozen, bins_plot, vivo_rate, vivo_smooth):
         total = np.sum(late_profile_mean) + 1e-9
         loss_val += (off_lobe / total) ** 2 * 50.0
 
-        # RECOVERY of bump WIDTH: the attractor must re-narrow, not stay in the
-        # stable BROAD state (FWHM ~213 deg) the I_T rebound kicks it into. The
-        # KAPPA_I sharpening band (pinned in the bounds) does the structural work;
-        # this is a GENTLE nudge (low weight) penalizing late FWHM > ~100 deg so
-        # the optimizer prefers the recovering regime without chasing degenerate
-        # narrow spikes (a strong penalty did exactly that).
-        half = late_peak / 2.0
-        late_fwhm = np.sum(late_profile_mean >= half) * (360.0 / len(THETA))
-        loss_val += (np.maximum(0.0, late_fwhm - 100.0)) ** 2 * 0.2
+        # RECOVERY of bump WIDTH: gentle nudge toward re-narrowing (a STRONG penalty
+        # just makes the optimizer KILL the rebound to stay narrow -> no SC). The
+        # recurrent-gated I_T already prevents the dissolve/drift; full re-narrowing
+        # to baseline is limited by network bistability (the rebound kicks the bump
+        # into a broad stable state) and would need a monostable redesign.
+        recov_profile = np.mean(rates[(t_model > 300.0) & (t_model < 500.0), :], axis=0)
+        rp_peak = np.max(recov_profile)
+        if rp_peak > 1.0:
+            recov_fwhm = np.sum(recov_profile >= rp_peak / 2.0) * (360.0 / len(THETA))
+            loss_val += (np.maximum(0.0, recov_fwhm - 100.0)) ** 2 * 0.2
 
     if np.isnan(loss_val) or np.isinf(loss_val):
         return 1e6
@@ -560,11 +596,11 @@ def loss_joint(params, bins_plot, vivo_rate, vivo_smooth, w_baseline=4.0):
     Reuses loss_stage1 (baseline regularizers, no data) and loss_stage2 (evoked
     MSE + dip + anti-PD + bump survival) unchanged -> one source of truth.
     """
-    s1 = params[:9]
-    s2 = params[9:]
+    s1 = params[:10]
+    s2 = params[10:]
     base = loss_stage1(s1)
     if base >= 1e6:
         return 1e6
-    frozen = dict(zip(PARAM_NAMES[:9], s1))
+    frozen = dict(zip(PARAM_NAMES[:10], s1))
     evoked = loss_stage2(s2, frozen, bins_plot, vivo_rate, vivo_smooth)
     return float(w_baseline * base + evoked)

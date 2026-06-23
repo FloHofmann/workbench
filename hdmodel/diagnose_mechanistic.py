@@ -18,7 +18,8 @@ import matplotlib.pyplot as plt
 import optimization_engine as oe
 from vivo_target import load_vivo_psth
 
-_S1_KEYS = ["tau_E", "tau_I", "I_baseline", "J1", "KAPPA_E", "W_IE", "KAPPA_I", "W_EI", "I_HD"]
+_S1_KEYS = ["tau_E", "tau_I", "I_baseline", "J1", "KAPPA_E", "W_IE", "KAPPA_I", "W_EI",
+            "I_HD", "W_GLOBAL"]
 # Index of g_T / g_h inside the stage-2 parameter vector (for ablation).
 _GT_IDX, _GH_IDX = 4, 9
 

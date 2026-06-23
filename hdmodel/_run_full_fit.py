@@ -40,10 +40,10 @@ def main():
             best = rp
     rp = best
     p = list(rp.x)
-    s1, s2 = p[:9], p[9:]
+    s1, s2 = p[:10], p[10:]
     print("JOINT loss", round(rp.fun, 1), flush=True)
-    print(" stage1:", {k: round(v, 2) for k, v in zip(oe.PARAM_NAMES[:9], s1)}, flush=True)
-    print(" stage2:", {k: round(v, 2) for k, v in zip(oe.PARAM_NAMES[9:], s2)}, flush=True)
+    print(" stage1:", {k: round(v, 2) for k, v in zip(oe.PARAM_NAMES[:10], s1)}, flush=True)
+    print(" stage2:", {k: round(v, 2) for k, v in zip(oe.PARAM_NAMES[10:], s2)}, flush=True)
 
     # baseline check
     _, ri = oe.run_model_idle(*s1)
