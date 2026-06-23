@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(python -c ' *)",
-      "Bash(python -c \"import json; nb=json.load\\(open\\('explore_results.ipynb'\\)\\); [print\\(i, repr\\(c['source'][:80]\\)\\) for i,c in enumerate\\(nb['cells']\\) if 'SIGMA_SWEEP' in ''.join\\(c['source']\\) and '_run_model_sigma' in ''.join\\(c['source']\\)]\")",
-      "Bash(.venv/Scripts/python.exe -c ' *)"
-    ]
-  }
-}
