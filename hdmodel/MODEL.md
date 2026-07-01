@@ -19,9 +19,11 @@ cells (population PSTH, preferred-direction cells):
    *transient*, not a new sustained plateau).
 
 In **anti-preferred-direction (anti-PD)** cells only the FC appears — the dip and SC
-are **direction-selective**. A purely phenomenological model (injecting the SC as a
-fitted exponential) reproduces the trace but explains nothing. The goal here is for
-each component to **emerge** from biophysically-motivated mechanisms.
+are **direction-selective**. We first sought to make every component **emerge** from
+AD's own biophysics; a key result (Section 8b) is that a tall, recovering SC *cannot*
+emerge from the AD ring alone. The model therefore treats the FC and SC as **inherited
+inputs** (their upstream source is left open — see Section 8b), while the **dip**,
+**direction-selectivity**, and the **recovery** are genuine AD-network properties.
 
 The substrate is the HD system: HD cells fire as a function of head azimuth and are
 thought to be maintained by a **continuous (ring) attractor** — a localized "bump" of
@@ -48,17 +50,16 @@ qualitative biophysics (cf. Destexhe et al. 1996 for the reduced T-current).
 | Component | Mechanism | Produces | Biology |
 |---|---|---|---|
 | Ring of `N=120` excitatory cells + interneurons | tuned Mexican-hat connectivity | the HD bump | CANN / ring attractor |
-| Supralinear gain `r = f(u)` | Naka–Rushton / SSN | **monostable** sharp bump | power-law f-I curve |
+| Threshold-linear gain `r = f(u)` | `clip(GAIN_SLOPE·[u]₊, 0, R_MAX)` | firing rate | linear f-I (supralinear tested & dropped) |
 | Tonic tuned drive `I_HD` | upstream HD input | baseline tuning + anchoring | LMN/DTN → AD |
-| Brief flash `A_fast` | sensory volley | **FC** | auditory input |
-| Feedback inhibition | interneuron ring | **dip** | feedforward/feedback inhibition |
-| Tuned SC drive `A_sc` | feedforward double-exponential at PD | **SC amplitude** (the ~91 Hz hump) | upstream phasic re-excitation |
-| `I_T` (T-type Ca²⁺) | de-inactivation + activation gates | SC rebound **shaping** | thalamic rebound burst |
+| **Inherited** FC volley `A_fast` | brief untuned sensory input | **FC** | auditory volley (ubiquitous ⇒ untuned) |
+| Feedback inhibition | interneuron ring | **dip** (emergent) | feedforward/feedback inhibition |
+| **Inherited** tuned SC drive `A_sc` | feedforward double-exponential at PD | **SC amplitude** (the ~91 Hz hump) | upstream phasic re-excitation (tuned ⇒ HD pathway) |
+| `I_T` (T-type Ca²⁺) | de-inactivation + activation gates | SC rebound **shaping** (~0.10 R²) | thalamic rebound burst |
 | `I_h` (HCN) | slow hyperpolarization-activated current | SC tail **shaping** | thalamic sag/ADP |
 | recurrent gating of `I_T` | only bump cells rebound | spatial confinement | rebound needs depolarizing drive |
-| Ca-activated disinhibition | rebound suppresses local inhibition | tail support | slow ADP / reduced TRN drive |
-| Global adaptation `g_a` | mean-field current ∝ recent activity | **SC recovery to baseline** | SK / M-current (spike-freq. adaptation) |
-| Global inhibition `W_GLOBAL` | ∝ total activity | width regulation | broad/TRN inhibition |
+| Global adaptation `g_a` | mean-field current ∝ recent activity | **width recovery to baseline** | SK / M-current (spike-freq. adaptation) |
+| Global inhibition `W_GLOBAL` | ∝ total activity | **stabilizes the linear ring** | broad/TRN inhibition |
 
 ---
 
@@ -84,35 +85,29 @@ force and the bump width becomes unstable.
 
 ---
 
-## 4. Supralinear gain (the key to a well-behaved attractor)
+## 4. Gain (threshold-linear) — and why supralinearity was dropped
 
-The firing rate is a **supralinear (Naka–Rushton) function** of the activation:
+The firing rate is a **threshold-linear** function of the activation:
 
 $$
-r = f(u) = R_{\max}\,\frac{[u]_+^{\,p}}{\sigma^{p} + [u]_+^{\,p}},
-\qquad [u]_+=\max(0,u),
+r = f(u) = \min\!\big(R_{\max},\; \text{GAIN\_SLOPE}\cdot[u]_+\big),\qquad [u]_+=\max(0,u),
 $$
 
-with $R_{\max}=1000$ Hz, $\sigma=35$, $p=2$ (constants `R_MAX, GAIN_SIGMA, GAIN_P`).
-Over the operating range (0–200 Hz) the activation stays well below $\sigma$, so the
-curve is effectively the **power law** $r\propto[u]_+^{2}$ — the **Stabilized
-Supralinear Network (SSN)** regime.
+with `GAIN_SLOPE`$=6$ (baseline operating point $u\approx6\!-\!7\to\sim40$ Hz) and
+$R_{\max}=1000$ Hz kept only as a safety clip (never reached in normal fits).
 
-**Why it matters.** With a threshold-*linear* gain ($r=[u]_+$) the ring attractor is
-*marginal*: it supports a continuum of bump widths, so the SC rebound permanently
-kicks the bump into a stuck broad state. A **supralinear** gain makes the network
-**winner-take-all**: high-rate cells dominate the recurrent loop and broad, low-rate
-bumps become unstable. The attractor is then **monostable** — a single sharp bump —
-and any perturbation (the SC) relaxes back toward baseline width. This is the central
-result of SSN theory (Ahmadian, Rubin & Miller 2013; Rubin, Van Hooser & Miller
-2015); power-law / expansive nonlinearities are also the empirically-measured cortical
-f-I relation (Priebe & Ferster 2008; Hansel & van Vreeswijk 2002), and the
-Naka–Rushton form is the standard saturating-supralinear gain (Naka & Rushton 1966;
-Albrecht & Hamilton 1982; Carandini & Heeger 2012). $R_{\max}$ is set far above the
-firing range so the operating point sits in the convex (supralinear) part rather than
-the saturating shoulder — putting it in the saturating region re-introduces the broad
-state, and making $p$ too large ($\gtrsim 2.5$) makes the winner-take-all so strong
-the SC spawns a spurious bump that drifts off the cue.
+**Why not supralinear.** A supralinear (Naka–Rushton / SSN) gain was tried first, to
+make the ring **monostable** (winner-take-all): with a threshold-linear gain the ring
+is *marginal* and, if the SC were **generated recurrently**, a perturbation could kick
+the bump into a stuck broad state (SSN theory: Ahmadian, Rubin & Miller 2013; Rubin,
+Van Hooser & Miller 2015). But in the final model the SC is an **inherited input**, not
+recurrently generated, and the bump **width** is recovered by the global adaptation
+current (Section 8b). Under those conditions the winner-take-all is not only
+unnecessary but mildly *harmful* — it distorts the network's linear tracking of the
+injected SC. Refitting with a plain linear gain **raised R² from 0.877 to 0.94**, so
+supralinearity was removed. Stability against runaway/drift (which the supralinear gain
+had also provided) is instead supplied by the global inhibition $W_{\text{glob}}$
+(Section 5); ablating $W_{\text{glob}}$ makes the linear ring blow up.
 
 ---
 
@@ -125,7 +120,7 @@ $$
 \tau_E \frac{du^E_i}{dt}
 = -u^E_i
 + \underbrace{J_1 (K^E r_E)_i}_{\text{recurrent exc.}}
-- \underbrace{d_i\,W_{IE}(K^I r_I)_i}_{\text{tuned inh.}}
+- \underbrace{W_{IE}(K^I r_I)_i}_{\text{tuned inh.}}
 - \underbrace{W_{\text{glob}}\,\overline{r_E}}_{\text{global inh.}}
 + I^{\text{ext}}_i + I^{SC}_i + I^T_i + I^h_i
 - \underbrace{g_a\,a}_{\text{adaptation}} ,
@@ -138,12 +133,11 @@ $$
 $$
 
 - $J_1$ scales recurrent excitation; $W_{IE}$ the tuned (Mexican-hat) inhibition.
-- $d_i\in[0.2,1]$ is the **disinhibition** factor (Section 8); $d_i\equiv1$ pre-stimulus.
 - $\overline{r_E}=\frac1N\sum_j r_{E,j}$ is the mean rate; $W_{\text{glob}}$ is a
-  **global inhibition** proportional to total activity. Because a broad bump has more
-  total activity than a sharp one, this term penalizes broad states and helps
-  regulate bump width — a broadly-projecting / reticular-thalamic (TRN) feedback
-  (Pinault 2004; Crabtree 2018). It complements the supralinear gain.
+  **global inhibition** proportional to total activity. With the linear gain this is
+  the term that **stabilizes** the ring against runaway/drift (ablating it makes the
+  network blow up) — a broadly-projecting / reticular-thalamic (TRN) feedback
+  (Pinault 2004; Crabtree 2018).
 - The interneuron ring is co-tuned with the local excitatory population through
   $K^E$, giving feedback inhibition that lags excitation by $\tau_I$ — the lag is what
   lets the post-flash inhibition transiently overshoot and produce the **dip**.
@@ -252,7 +246,7 @@ e^{\kappa_{HD}(\cos\theta_i-1)},\qquad \Delta t = t - (t_0 + \text{sc\_delay}),
 $$
 
 active for $t\ge t_0+\text{sc\_delay}$. Because it is **feedforward**, it sets the SC
-amplitude *without* recurrent amplification, so the monostable+adapting network simply
+amplitude *without* recurrent amplification, so the (linear) adapting network simply
 **tracks** it up to ~91 Hz and then follows it back down as it decays — the SC stays
 tall *and* transient. Because it is **tuned** ($\propto e^{\kappa_{HD}(\cos\theta-1)}$,
 the same shape as $I_{HD}$), it is ≈0 at the antipode, so the SC is **PD-selective**
@@ -263,29 +257,14 @@ toward baseline — the evidence that the drive supplies the hump.
 
 ---
 
-## 8. Ca-activated disinhibition (tail support)
+## 8. Ca-activated disinhibition (removed)
 
-A purely depolarizing current cannot, by itself, hold firing above the attractor's
-set-point: the E/I loop is homeostatic (more excitation → more feedback inhibition →
-cancellation). To produce a *sustained elevated* SC tail the model instead transiently
-**reduces inhibition**, raising the bump's set-point. A per-cell gate $s_{\text{dis}}$
-is driven by the cell's own $I_T$ burst (a Ca²⁺ proxy), rises slowly (lag
-$\tau_{\text{on}}$=`DELAY_TAU`) and decays slowly ($\tau_{\text{dis}}$):
-
-$$
-\text{drive}_i=\mathrm{clip}\!\big(I^T_i/200,\,0,\,1\big),\qquad
-\frac{ds_{\text{dis},i}}{dt}=\frac{\text{drive}_i-s_{\text{dis},i}}{\tau(\cdot)},\qquad
-d_i = \max\!\big(0.2,\ 1-g_{\text{dis}}\,s_{\text{dis},i}\big),
-$$
-
-and $d_i$ multiplies the tuned inhibition in the $u^E$ equation. Driving it off $I_T$
-makes it automatically **selective** (the antipode never bursts, so it never
-disinhibits → stays silent) and **transient** (no latch). This is the thalamic **slow
-afterdepolarization / post-burst disinhibition** motif — Ca²⁺ entry during the
-low-threshold spike engages slow depolarizing/disinhibitory processes (Ca-activated
-nonselective cation currents and reduced reticular drive; Hughes et al. 2002;
-Zhu et al. 1999; Pinault 2004). The slow rise also **delays** the disinhibition so it
-lifts the tail without inflating the rebound peak.
+An earlier version added a Ca-activated disinhibition (a per-cell $I_T$-driven
+reduction of local inhibition) to hold up the SC tail. An ablation of the final fit
+showed it contributes **0.000 R²** (the fitted conductance $g_{\text{dis}}$ collapsed to
+~0): once the SC is an inherited input with its own slow decay (plus $I_h$), no extra
+disinhibition is needed. It was **removed** — the SC tail is set by the SC drive's
+$\tau^{\text{off}}_{sc}$ and $I_h$.
 
 ---
 
@@ -322,14 +301,16 @@ peak — *the peak is preserved*; it **accrues over the elevated tail** and so p
 bump back to baseline and **destabilizes the latched broad state** — *true recovery*;
 and it is **global, not per-cell**, which matters because a *per-cell* adaptation makes
 the ring bump **travel** (the adapted peak fatigues and neighbours take over). A uniform
-pull-down has no preferred direction, so the bump stays put, and — combined with the
-supralinear gain — it also **re-narrows** the bump, recovering both rate **and** width.
-Ablating it ($g_a=0$) makes the bump latch elevated again.
+pull-down has no preferred direction, so the bump stays put, and it also **re-narrows**
+the bump, recovering both rate **and** width. It is the one genuinely load-bearing
+recovery mechanism: ablating it ($g_a=0$) leaves the bump stuck broad (FWHM ~105 vs
+~69°).
 
-This makes the model **semi-emergent**: the SC *shape* (rebound timing, tail) emerges
-from the intrinsic channels and the network, while the SC *amplitude* is a tuned
-feedforward input — the deliberate, minimal departure from full emergence required to
-reproduce a slow component that is simultaneously **tall, transient, and recovering**.
+This makes the model **semi-emergent**: the SC *shape* (rebound timing, tail) is shaped
+by the intrinsic channels and the network, while the SC *amplitude* is a tuned
+feedforward (inherited) input — the deliberate, minimal departure from full emergence
+required to reproduce a slow component that is simultaneously **tall, transient, and
+recovering**.
 
 ---
 
@@ -337,16 +318,16 @@ reproduce a slow component that is simultaneously **tall, transient, and recover
 
 - **FC**: the brief uniform flash drives every cell → sharp onset transient in PD and anti-PD.
 - **Dip**: the flash recruits feedback inhibition that, lagging by $\tau_I$, transiently overshoots → firing crashes.
-- **SC onset/shape**: the crash de-inactivates $I_T$; as the bump recovers, $I_T$ (gated to the bump) fires a phasic rebound, and $I_h$ (slow) plus Ca-activated disinhibition shape the tail.
-- **SC amplitude**: the tuned feedforward SC drive $A_{sc}$ lifts the PD bump to ~91 Hz without recurrent runaway (Section 7.3).
+- **SC onset/shape**: the crash de-inactivates $I_T$; as the bump recovers, $I_T$ (gated to the bump) fires a phasic rebound, and $I_h$ (slow) shapes the tail.
+- **SC amplitude**: the tuned feedforward (inherited) SC drive $A_{sc}$ lifts the PD bump to ~91 Hz without recurrent runaway (Section 7.3).
 - **Direction selectivity**: the SC drive and $I_T$ rebound are both tuned/gated to the bump; the non-saturating `u_E` preserves the bump through the FC so PD recovers first; the reformed bump's lateral inhibition keeps the antipode silent — anti-PD shows FC only.
-- **Recovery to baseline**: as the SC drive decays, the **global adaptation** $g_a$ pulls the bump back down and destabilizes any elevated state, while the supralinear gain + $I_{HD}$ anchor re-narrow and re-center it — PD and FWHM return to baseline by ~700 ms (Section 8b).
+- **Recovery to baseline**: as the SC drive decays, the **global adaptation** $g_a$ pulls the bump back down and re-narrows it, while $W_{\text{glob}}$ + the $I_{HD}$ anchor keep it stable and centered — PD and FWHM return to baseline by ~700 ms (Section 8b).
 
 ---
 
 ## 10. Fitting
 
-All 31 parameters are fit **jointly** to the population PSTH
+All 29 parameters are fit **jointly** to the population PSTH
 ([`vivo_target.load_vivo_psth`](vivo_target.py)) by a single objective
 [`loss_joint`](optimization_engine.py) = baseline-geometry regularizers
 (`loss_stage1`: peak ~40 Hz, FWHM 60–90°, single bump, anti-PD silent) + an
@@ -362,10 +343,11 @@ differential evolution (Storn & Price 1997) under-shoots (~0.6). The reported fi
 obtained by a **direct R²-search with a validity gate** ([`_run_full_fit.py`](_run_full_fit.py))
 that rejects any non-recovering or degenerate solution (baseline must be a real ~40 Hz
 bump; rate and width must return near baseline by 600 ms). **Ablation** verifies the
-mechanism split: $A_{sc}=0$ collapses the SC amplitude; $g_a=0$ makes the bump latch
-elevated (no recovery). Best fit to date: **R² ≈ 0.88** on the [-50, 700] ms window,
-with a monostable, PD-selective attractor whose SC is tall, transient, and **recovers**
-to baseline in both rate (~92→~40 Hz) and width (FWHM back to ~baseline).
+mechanism split: $A_{sc}=0$ collapses the SC amplitude; $g_a=0$ leaves the bump stuck
+broad; $W_{\text{glob}}=0$ makes it blow up. Best fit: **R² ≈ 0.94** on the [-50, 700] ms
+window (the linear gain beats the earlier supralinear 0.88), with a PD-selective
+attractor whose SC is tall, transient, and **recovers** to baseline in both rate
+(~95→~40 Hz) and width.
 
 ---
 
@@ -375,10 +357,10 @@ to baseline in both rate (~92→~40 Hz) and width (FWHM back to ~baseline).
 KAPPA_I, W_EI, I_HD, W_GLOBAL`.
 **Stimulus / channels (Stage 2, fit):** `A_fast, fc_stim_duration, stim_delay,
 reversal_potential, g_T, V_half_T, k_T, tau_hT, E_Ca, g_h, V_half_h, tau_h_on,
-tau_h_off, g_dis, tau_dis, g_a, tau_a, A_sc, tau_sc_on, tau_sc_off, sc_delay`
+tau_h_off, g_a, tau_a, A_sc, tau_sc_on, tau_sc_off, sc_delay`
 (the last six: global adaptation and the tuned feedforward SC drive).
-**Fixed constants:** `N=120, DT=0.2, R_MAX=1000, GAIN_SIGMA=35, GAIN_P=2, KAPPA_HD=2,
-K_H_SLOPE=8, DELAY_TAU=40, REC_HALF=10`.
+**Fixed constants:** `N=120, DT=0.2, GAIN_SLOPE=6, R_MAX=1000 (safety clip),
+KAPPA_HD=2, K_H_SLOPE=8, REC_HALF=10`.
 
 ---
 

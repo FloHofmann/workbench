@@ -27,11 +27,6 @@ HD_SHAPE = np.exp(KAPPA_HD * (np.cos(THETA) - 1.0))
 # count tractable; only its midpoint V_half_h and gain g_h are free.
 K_H_SLOPE = 8.0
 
-# Rise time constant (ms) of the disinhibition gate. SLOW (not instantaneous) so
-# the gate LAGS the I_T burst and peaks ~after the rebound -> it lifts the tail
-# without inflating the rebound peak. Decay is the fitted tau_dis (the tail).
-DELAY_TAU = 40.0
-
 # Half-saturation of the recurrent gate on I_T (in units of recurrent excitation
 # J1*(K_E@r_E)). The rebound only expresses where a cell receives recurrent drive
 # (= it is part of the bump). Off-bump cells de-inactivate (h_T high from the
@@ -46,19 +41,16 @@ REC_HALF = 10.0
 # (single sharp bump) and the post-stim rebound relaxes back to baseline width.
 # Biophysically a broadly-projecting / TRN feedback inhibition.
 
-# SUPRALINEAR gain (Naka-Rushton f-I curve): r = R_MAX * u^p / (SIGMA^p + u^p) for
-# u>0. The supralinear region (u < SIGMA) makes the ring WINNER-TAKE-ALL: high-rate
-# cells dominate the recurrent loop and broad low-rate bumps are unstable -> the
-# attractor is MONOSTABLE (single sharp bump), so the SC rebound relaxes back to
-# baseline width instead of getting stuck in a broad state (the limit of the old
-# threshold-LINEAR gain, which is marginal and supports a continuum of widths).
-# Saturates at R_MAX so rates stay bounded (replaces the old clip at 500).
-R_MAX = 1000.0      # saturation ceiling far ABOVE the operating range (0-200 Hz) so
-                    #   the whole evoked range lives in the CONVEX power-law part of
-                    #   the curve (SSN regime), monostable but not so steep that the
-                    #   SC kicks a spurious bump to the antipode.
-GAIN_SIGMA = 35.0   # half-activation (membrane units)
-GAIN_P = 2.0        # supralinear exponent (SSN standard; mild winner-take-all)
+# THRESHOLD-LINEAR gain: r = clip(GAIN_SLOPE*[u]+, 0, R_MAX). We tested a supralinear
+# (Naka-Rushton / SSN) gain to force a monostable ring, but with the SC delivered as
+# an INHERITED input (not recurrently generated) and the bump WIDTH recovered by the
+# global adaptation current, the winner-take-all is unnecessary AND slightly hurts the
+# fit (it distorts the network's tracking of the injected SC): refitting with a plain
+# linear gain RAISED R^2 (0.877 -> 0.932). So the gain is linear; stability against
+# runaway/drift is provided by the global inhibition W_GLOBAL, and width recovery by
+# the adaptation. R_MAX is kept only as a safety clip (never reached in normal fits).
+R_MAX = 1000.0      # rate clip (safety; the evoked range is 0-200 Hz)
+GAIN_SLOPE = 6.0    # f-I slope; baseline operating point u ~ 6-7 -> ~40 Hz
 
 # Stage-specific (short) time grids. Each eval only needs the window the loss reads.
 TIME_STAGE1 = np.arange(T_BURN_IN, 50.0, DT)   # steady state + (-150..-50) variance window
@@ -137,11 +129,9 @@ STAGE2_BOUNDS = [
                       #   during the brief deep dip, not just ~40%)
     (200.0, 900.0),   # tau_h_off (SLOW HCN deactivation -> the elevated SC tail
                       #   persists to ~400 ms, matching the data's slow decay)
-    # --- slow disinhibition (reduced TRN inhibition post-burst) ---
-    (0.0, 0.8),       # g_dis (disinhibition strength; fraction of inhibition removed
-                      #   at saturation -> raises the bump setpoint for the tail)
-    (150.0, 1000.0),  # tau_dis (disinhibition decay -> sets the SC tail duration;
-                      #   raised so the tail can persist past 150 ms to ~300 ms)
+    # (Ca-activated disinhibition was removed: ablation showed it contributes 0.000
+    #  R^2 -- the fitted g_dis collapsed to ~0. The SC tail is set by the injected SC
+    #  drive + I_h, not by disinhibition.)
     # --- slow spike-frequency ADAPTATION (Ca-activated K+ / SK / M-current) ---
     # A hyperpolarizing current a that tracks the cell's own rate r_E with a SLOW
     # time constant tau_a. Because it is slow it is ~0 at the sharp SC peak (~55 ms)
@@ -194,8 +184,6 @@ PARAM_NAMES = [
     "V_half_h",
     "tau_h_on",
     "tau_h_off",
-    "g_dis",
-    "tau_dis",
     "g_a",
     "tau_a",
     "A_sc",
@@ -215,10 +203,9 @@ PARAM_NAMES = [
 # ---------------------------------------------------------------------------
 @njit(fastmath=True, cache=True)
 def _gain(u):
-    """Supralinear Naka-Rushton f-I curve (winner-take-all -> monostable bump)."""
-    up = np.maximum(0.0, u)
-    upp = up ** GAIN_P
-    return R_MAX * upp / (GAIN_SIGMA ** GAIN_P + upp)
+    """Threshold-linear f-I curve, r = clip(GAIN_SLOPE*[u]+, 0, R_MAX). (A supralinear
+    SSN gain was tried and dropped -- see the note at GAIN_SLOPE.)"""
+    return np.minimum(R_MAX, GAIN_SLOPE * np.maximum(0.0, u))
 
 
 @njit(fastmath=True, cache=True)
@@ -265,7 +252,7 @@ def _simulate_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I
                    A_fast, fc_stim_duration, stim_delay, reversal_potential,
                    g_T, V_half_T, k_T, tau_hT, E_Ca,
                    g_h, V_half_h, tau_h_on, tau_h_off,
-                   g_dis, tau_dis, g_a, tau_a,
+                   g_a, tau_a,
                    A_sc, tau_sc_on, tau_sc_off, sc_delay, time):
     # Tuned connectivity (see _simulate_idle): narrow excite, broad inhibit.
     K_E = np.exp(KAPPA_E * (COS_D_THETA - 1.0)) / N
@@ -281,27 +268,15 @@ def _simulate_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I
     h_T = np.zeros(N)
     m_h = np.zeros(N)
 
-    # Slow Ca-activated disinhibition (the thalamic slow afterdepolarization),
-    # PER CELL. s_dis is a bounded [0,1] gate driven by the cell's I_T rebound
-    # burst; it SUPPRESSES the inhibition that cell receives -> raises the bump
-    # setpoint -> the elevated SC tail. Driven by I_T so it is (a) SELECTIVE -- only
-    # the rebounding bump cells, the antipode never bursts -> stays inhibited;
-    # (b) TRANSIENT -- I_T shuts off after the burst, no latch; and (c) DELAYED --
-    # the gate rises SLOWLY (DELAY_TAU) so it peaks ~after the rebound, lifting the
-    # TAIL without inflating the rebound peak, then decays slowly (tau_dis = the
-    # tail duration). Changing the E/I balance evades the homeostasis that cancels
-    # added drive.
-    s_dis = np.zeros(N)
-
     # Slow spike-frequency adaptation (Ca-activated K+ / SK / M-current). GLOBAL
     # (mean-field): a single scalar low-pass-filters the network's MEAN rate with
     # tau_a; I_adapt = g_a * a is a uniform hyperpolarization. Global (not per-cell)
     # is deliberate: per-cell adaptation makes the ring bump TRAVEL (the adapted
-    # peak cells fatigue, neighbours take over -> drifting bump). A uniform pull-
-    # down has no preferred direction so the bump stays put; combined with the
-    # SUPRALINEAR gain it also RE-NARROWS the bump (the low-rate flanks drop below
-    # threshold faster than the peak), so both height AND width recover. Slow =>
-    # ~0 at the sharp SC peak (peak preserved), large over the tail (recovery).
+    # peak cells fatigue, neighbours take over -> drifting bump). A uniform pull-down
+    # has no preferred direction so the bump stays put. Slow => ~0 at the sharp SC
+    # peak (peak preserved), large over the tail => it RE-NARROWS and lowers the bump
+    # back to baseline. This is the load-bearing WIDTH-recovery mechanism (ablating
+    # it leaves the bump stuck broad, FWHM ~105 vs ~69 deg).
     a = 0.0
 
     I_ext_base = I_baseline + I_HD * HD_SHAPE  # tonic upstream HD drive (loop-invariant)
@@ -371,24 +346,13 @@ def _simulate_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I
             g_sc = np.exp(-dt_sc / tau_sc_off) - np.exp(-dt_sc / tau_sc_on)
             I_ext = I_ext + A_sc * g_sc * HD_SHAPE
 
-        # Ca-activated disinhibition (per cell). ca integrates the cell's I_T burst
-        # and leaks with tau_dis; disinhib in [floor,1] scales DOWN that cell's
-        # inhibition as a saturating function of accumulated Ca. Because ca is an
-        # INTEGRAL it peaks after the burst -> boosts the tail, not the rebound
-        # peak. Floored for stability.
+        # Slow global adaptation: a low-pass-tracks the mean rate (tau_a, slow) ->
+        # uniform hyperpolarizing I_adapt = g_a*a. Gated off pre-stim. Slow => ~0 at
+        # the sharp SC peak (peak preserved) but accrues over the tail => pulls the
+        # bump back down and re-narrows it => width recovery.
         if t < stim_onset:
-            disinhib = np.ones(N)
             I_adapt = 0.0
         else:
-            drive = np.minimum(1.0, np.maximum(0.0, I_T / 200.0))
-            tau_s = np.where(drive > s_dis, DELAY_TAU, tau_dis)  # slow rise / slow decay
-            s_dis += (drive - s_dis) * (DT / tau_s)
-            disinhib = np.maximum(0.2, 1.0 - g_dis * s_dis)
-
-            # Slow adaptation: a low-pass-tracks r_E (tau_a, slow) -> hyperpolarizing
-            # I_adapt = -g_a*a. Slow => ~0 at the sharp SC peak (peak preserved) but
-            # accrues over the elevated tail => pulls the bump back to baseline and
-            # kills the persistent elevated/broad state => the network recovers.
             a += (np.sum(r_E) / N - a) * (DT / tau_a)
             I_adapt = g_a * a
 
@@ -396,7 +360,7 @@ def _simulate_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I
         u_I += du_I * (DT / tau_I)
         r_I = np.minimum(500.0, np.maximum(0.0, u_I))
 
-        du_E = (-u_E + rec_E - disinhib * W_IE * (K_I @ r_I)
+        du_E = (-u_E + rec_E - W_IE * (K_I @ r_I)
                 - W_GLOBAL * (np.sum(r_E) / N) + I_ext + I_T + I_h - I_adapt)
         u_E += du_E * (DT / tau_E)
 
@@ -426,7 +390,7 @@ def run_model_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I
                    A_fast, fc_stim_duration, stim_delay, reversal_potential,
                    g_T, V_half_T, k_T, tau_hT, E_Ca,
                    g_h, V_half_h, tau_h_on, tau_h_off,
-                   g_dis, tau_dis, g_a, tau_a,
+                   g_a, tau_a,
                    A_sc, tau_sc_on, tau_sc_off, sc_delay,
                    F_matrix=None, F_inv_matrix=None):
     return _simulate_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I_HD,
@@ -434,7 +398,7 @@ def run_model_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I
                           A_fast, fc_stim_duration, stim_delay, reversal_potential,
                           g_T, V_half_T, k_T, tau_hT, E_Ca,
                           g_h, V_half_h, tau_h_on, tau_h_off,
-                          g_dis, tau_dis, g_a, tau_a,
+                          g_a, tau_a,
                           A_sc, tau_sc_on, tau_sc_off, sc_delay, TIME)
 
 
@@ -528,16 +492,16 @@ def loss_stage2(params, stage1_frozen, bins_plot, vivo_rate, vivo_smooth):
 
     Fits the model PD trace to the REAL population PSTH (vivo_rate / vivo_smooth
     from vivo_target.load_vivo_psth) via a hybrid raw-early / smooth-late MSE.
-    The SC shape is NOT prescribed here -- it must emerge from the I_T/I_h
-    channel dynamics in _simulate_stim. Only light *structural* regularizers are
-    added (anti-PD silence, single bump, bump survival) so the optimizer can't
+    The SC amplitude is carried by the tuned feedforward SC drive (an inherited
+    input) and shaped by the I_T/I_h channels; only light *structural* regularizers
+    are added (anti-PD silence, single bump, width recovery) so the optimizer can't
     match the trace by destroying the attractor.
     """
     (
         A_fast, fc_stim_duration, stim_delay, reversal_potential,
         g_T, V_half_T, k_T, tau_hT, E_Ca,
         g_h, V_half_h, tau_h_on, tau_h_off,
-        g_dis, tau_dis, g_a, tau_a,
+        g_a, tau_a,
         A_sc, tau_sc_on, tau_sc_off, sc_delay,
     ) = params
 
@@ -558,7 +522,7 @@ def loss_stage2(params, stage1_frozen, bins_plot, vivo_rate, vivo_smooth):
         A_fast, fc_stim_duration, stim_delay, reversal_potential,
         g_T, V_half_T, k_T, tau_hT, E_Ca,
         g_h, V_half_h, tau_h_on, tau_h_off,
-        g_dis, tau_dis, g_a, tau_a,
+        g_a, tau_a,
         A_sc, tau_sc_on, tau_sc_off, sc_delay, TIME_STAGE2,
     )
 

@@ -22,8 +22,8 @@ _S1_KEYS = ["tau_E", "tau_I", "I_baseline", "J1", "KAPPA_E", "W_IE", "KAPPA_I", 
             "I_HD", "W_GLOBAL"]
 # Indices INSIDE the stage-2 parameter vector (PARAM_NAMES[10:]) for ablation.
 _GT_IDX, _GH_IDX = 4, 9      # g_T, g_h (intrinsic channels)
-_GA_IDX = 15                 # g_a  (global adaptation -> recovery)
-_ASC_IDX = 17                # A_sc (tuned feedforward SC drive -> SC amplitude)
+_GA_IDX = 13                 # g_a  (global adaptation -> width recovery)
+_ASC_IDX = 15                # A_sc (tuned feedforward SC drive -> SC amplitude)
 
 
 def _run(stage1_frozen, stage2_params):
