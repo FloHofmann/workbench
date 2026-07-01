@@ -20,8 +20,10 @@ from vivo_target import load_vivo_psth
 
 _S1_KEYS = ["tau_E", "tau_I", "I_baseline", "J1", "KAPPA_E", "W_IE", "KAPPA_I", "W_EI",
             "I_HD", "W_GLOBAL"]
-# Index of g_T / g_h inside the stage-2 parameter vector (for ablation).
-_GT_IDX, _GH_IDX = 4, 9
+# Indices INSIDE the stage-2 parameter vector (PARAM_NAMES[10:]) for ablation.
+_GT_IDX, _GH_IDX = 4, 9      # g_T, g_h (intrinsic channels)
+_GA_IDX = 15                 # g_a  (global adaptation -> recovery)
+_ASC_IDX = 17                # A_sc (tuned feedforward SC drive -> SC amplitude)
 
 
 def _run(stage1_frozen, stage2_params):
@@ -54,10 +56,10 @@ def diagnose(stage1_frozen, stage2_params, vivo=None, title="", t_lo=None, t_hi=
     idx_90 = int(np.argmin(np.abs(oe.THETA - np.pi / 2)))
     pd90 = rates[:, idx_90]
 
-    # Ablation: zero both intrinsic conductances -> SC must collapse to baseline.
+    # Ablation: zero the tuned SC drive -> the SC amplitude must collapse toward
+    # baseline (the drive is what sets the ~91 Hz hump; channels only shape it).
     abl = list(stage2_params)
-    abl[_GT_IDX] = 0.0
-    abl[_GH_IDX] = 0.0
+    abl[_ASC_IDX] = 0.0
     _, rates_abl = _run(stage1_frozen, abl)
     pd_abl = rates_abl[:, oe._IDX_0]
 
@@ -76,8 +78,9 @@ def diagnose(stage1_frozen, stage2_params, vivo=None, title="", t_lo=None, t_hi=
     ax.plot(bins[vwin], vrate[vwin], color="0.4", lw=1.5, label="in vivo (raw)")
     ax.plot(bins[vwin], vsmooth[vwin], color="0.4", ls="--", lw=1.5, label="in vivo (smooth)")
     ax.plot(t, pd, color="crimson", lw=2.2, label="model PD (0deg)")
-    ax.plot(t, pd_abl, color="crimson", ls=":", lw=1.5, label="model PD, g_T=g_h=0 (ablation)")
+    ax.plot(t, pd_abl, color="crimson", ls=":", lw=1.5, label="model PD, A_sc=0 (SC drive off)")
     ax.set_xlim(t_lo, t_hi)
+    ax.set_ylim(0, np.max(vrate[vwin]) + 0.125*np.max(vrate[vwin]))
     ax.set_xlabel("time rel. stim (ms)"); ax.set_ylabel("firing rate (Hz)")
     ax.set_title(f"PD vs biology   R2={r2:.3f}")
     ax.legend(fontsize=8); ax.grid(alpha=0.3)
@@ -88,6 +91,7 @@ def diagnose(stage1_frozen, stage2_params, vivo=None, title="", t_lo=None, t_hi=
     ax.plot(t, pd90, color="orange", lw=2, label="90deg")
     ax.plot(t, anti, color="navy", lw=2, label="anti-PD (180deg)")
     ax.set_xlim(t_lo, t_hi)
+    ax.set_ylim(0, np.max(pd) + 0.125*np.max(pd))
     ax.set_xlabel("time rel. stim (ms)"); ax.set_ylabel("firing rate (Hz)")
     ax.set_title("directional traces (SC should be PD-only)")
     ax.legend(fontsize=8); ax.grid(alpha=0.3)
@@ -112,19 +116,21 @@ def diagnose(stage1_frozen, stage2_params, vivo=None, title="", t_lo=None, t_hi=
     ax.legend(fontsize=7, loc="upper right")
     fig.colorbar(im, ax=ax, label="Hz")
 
-    # (4) channel decomposition: I_T-only vs I_h-only rebound contribution
+    # (4) mechanism decomposition: SC drive (amplitude) vs adaptation (recovery)
     ax = fig.add_subplot(gs[1, 1])
-    it_only = list(stage2_params); it_only[_GH_IDX] = 0.0   # g_h = 0 -> I_T only
-    ih_only = list(stage2_params); ih_only[_GT_IDX] = 0.0   # g_T = 0 -> I_h only
-    _, r_it = _run(stage1_frozen, it_only)
-    _, r_ih = _run(stage1_frozen, ih_only)
+    no_adapt = list(stage2_params); no_adapt[_GA_IDX] = 0.0   # g_a=0 -> no recovery (latch)
+    no_chan = list(stage2_params); no_chan[_GT_IDX] = 0.0; no_chan[_GH_IDX] = 0.0
+    _, r_na = _run(stage1_frozen, no_adapt)
+    _, r_nc = _run(stage1_frozen, no_chan)
     ax.plot(t, pd, color="crimson", lw=2, label="full")
-    ax.plot(t, r_it[:, oe._IDX_0], color="seagreen", lw=1.6, label="I_T only (g_h=0)")
-    ax.plot(t, r_ih[:, oe._IDX_0], color="purple", lw=1.6, label="I_h only (g_T=0)")
-    ax.plot(t, pd_abl, color="0.5", ls=":", lw=1.4, label="neither")
+    ax.plot(t, r_na[:, oe._IDX_0], color="darkorange", lw=1.6,
+            label="g_a=0 (no adaptation -> latches)")
+    ax.plot(t, r_nc[:, oe._IDX_0], color="seagreen", lw=1.4, label="g_T=g_h=0 (no channels)")
+    ax.plot(t, pd_abl, color="0.5", ls=":", lw=1.4, label="A_sc=0 (no SC drive)")
     ax.set_xlim(t_lo, t_hi)
+    ax.set_ylim(0, np.max(pd) + 0.125*np.max(pd))
     ax.set_xlabel("time rel. stim (ms)"); ax.set_ylabel("PD firing rate (Hz)")
-    ax.set_title("channel decomposition (timescale separation)")
+    ax.set_title("mechanism decomposition (drive=amplitude, adapt=recovery)")
     ax.legend(fontsize=8); ax.grid(alpha=0.3)
 
     fig.suptitle(title or "Mechanistic I_T + I_h diagnostic", fontsize=13)
@@ -133,8 +139,10 @@ def diagnose(stage1_frozen, stage2_params, vivo=None, title="", t_lo=None, t_hi=
 
     print(f"PD fit R2 = {r2:.3f}")
     sc = (t > 40) & (t < 300)
-    print(f"SC-window PD max: full {pd[sc].max():.1f} Hz | ablation {pd_abl[sc].max():.1f} Hz")
+    print(f"SC-window PD max: full {pd[sc].max():.1f} Hz | A_sc=0 {pd_abl[sc].max():.1f} Hz")
     print(f"SC-window anti-PD max: {anti[sc].max():.1f} Hz (should be near baseline)")
+    late = (t > 500) & (t < 700)
+    print(f"recovery: PD {np.mean(pd[late]):.1f} Hz @500-700 (baseline ~37; should return)")
     return r2
 
 

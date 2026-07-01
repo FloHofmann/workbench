@@ -15,7 +15,8 @@ cells (population PSTH, preferred-direction cells):
 1. **Fast component (FC)** — a sharp ~170–190 Hz transient at stimulus onset.
 2. **Brief inhibition (dip)** — firing drops for ~15–30 ms.
 3. **Slow component (SC)** — a phasic re-excitation peaking ~50–70 ms post-stimulus
-   and decaying slowly over hundreds of ms.
+   (~91 Hz) that **decays smoothly back to the ~37 Hz baseline by ~700 ms** (a
+   *transient*, not a new sustained plateau).
 
 In **anti-preferred-direction (anti-PD)** cells only the FC appears — the dip and SC
 are **direction-selective**. A purely phenomenological model (injecting the SC as a
@@ -51,10 +52,12 @@ qualitative biophysics (cf. Destexhe et al. 1996 for the reduced T-current).
 | Tonic tuned drive `I_HD` | upstream HD input | baseline tuning + anchoring | LMN/DTN → AD |
 | Brief flash `A_fast` | sensory volley | **FC** | auditory input |
 | Feedback inhibition | interneuron ring | **dip** | feedforward/feedback inhibition |
-| `I_T` (T-type Ca²⁺) | de-inactivation + activation gates | **SC rebound** | thalamic rebound burst |
-| `I_h` (HCN) | slow hyperpolarization-activated current | **SC decay tail** | thalamic sag/ADP |
+| Tuned SC drive `A_sc` | feedforward double-exponential at PD | **SC amplitude** (the ~91 Hz hump) | upstream phasic re-excitation |
+| `I_T` (T-type Ca²⁺) | de-inactivation + activation gates | SC rebound **shaping** | thalamic rebound burst |
+| `I_h` (HCN) | slow hyperpolarization-activated current | SC tail **shaping** | thalamic sag/ADP |
 | recurrent gating of `I_T` | only bump cells rebound | spatial confinement | rebound needs depolarizing drive |
-| Ca-activated disinhibition | rebound suppresses local inhibition | sustained elevated tail | slow ADP / reduced TRN drive |
+| Ca-activated disinhibition | rebound suppresses local inhibition | tail support | slow ADP / reduced TRN drive |
+| Global adaptation `g_a` | mean-field current ∝ recent activity | **SC recovery to baseline** | SK / M-current (spike-freq. adaptation) |
 | Global inhibition `W_GLOBAL` | ∝ total activity | width regulation | broad/TRN inhibition |
 
 ---
@@ -124,7 +127,8 @@ $$
 + \underbrace{J_1 (K^E r_E)_i}_{\text{recurrent exc.}}
 - \underbrace{d_i\,W_{IE}(K^I r_I)_i}_{\text{tuned inh.}}
 - \underbrace{W_{\text{glob}}\,\overline{r_E}}_{\text{global inh.}}
-+ I^{\text{ext}}_i + I^T_i + I^h_i ,
++ I^{\text{ext}}_i + I^{SC}_i + I^T_i + I^h_i
+- \underbrace{g_a\,a}_{\text{adaptation}} ,
 $$
 
 $$
@@ -235,9 +239,31 @@ when decaying ($\tau_{h,\text{off}}$, hundreds of ms) — reflecting the strongl
 voltage-dependent activation kinetics of HCN. The fast charge lets it build during the
 brief dip; the slow decay produces the **long SC tail**.
 
+### 7.3 Tuned feedforward SC drive (the SC amplitude)
+
+The intrinsic rebound currents above **shape** the SC, but they cannot by themselves
+set its *amplitude* without breaking the attractor (see Section 8b). The SC amplitude is
+therefore supplied by a tuned, feedforward transient input — a double-exponential
+(fast rise, slow decay) that turns on after the dip and is tuned to the cue direction:
+
+$$
+I^{SC}_i(t) = A_{sc}\,\Big(e^{-\Delta t/\tau^{\text{off}}_{sc}} - e^{-\Delta t/\tau^{\text{on}}_{sc}}\Big)\,
+e^{\kappa_{HD}(\cos\theta_i-1)},\qquad \Delta t = t - (t_0 + \text{sc\_delay}),
+$$
+
+active for $t\ge t_0+\text{sc\_delay}$. Because it is **feedforward**, it sets the SC
+amplitude *without* recurrent amplification, so the monostable+adapting network simply
+**tracks** it up to ~91 Hz and then follows it back down as it decays — the SC stays
+tall *and* transient. Because it is **tuned** ($\propto e^{\kappa_{HD}(\cos\theta-1)}$,
+the same shape as $I_{HD}$), it is ≈0 at the antipode, so the SC is **PD-selective**
+for free (anti-PD shows only the FC). Biologically this is the phasic re-excitation AD
+inherits from upstream HD / sensory structures after the startle, riding on top of the
+intrinsic $I_T$/$I_h$ rebound. Ablating it ($A_{sc}=0$) collapses the SC amplitude
+toward baseline — the evidence that the drive supplies the hump.
+
 ---
 
-## 8. Ca-activated disinhibition (the sustained tail)
+## 8. Ca-activated disinhibition (tail support)
 
 A purely depolarizing current cannot, by itself, hold firing above the attractor's
 set-point: the E/I loop is homeostatic (more excitation → more feedback inhibition →
@@ -263,31 +289,83 @@ lifts the tail without inflating the rebound peak.
 
 ---
 
+## 8b. The amplitude–recovery tension, and global adaptation
+
+A central finding shaped the final design. In a **single** ring attractor, a slow
+component that is *fully emergent* (produced by recurrent amplification of the intrinsic
+rebound) and tall enough to reach ~91 Hz is **incompatible with recovery**:
+
+- The ~91 Hz SC is ~2.5× baseline. Reaching it by recurrence requires strong
+  excitatory/channel gain, which pushes the ring into a **second stable (bistable)
+  state** — a broad, elevated bump (~82 Hz, FWHM ~117°) that **never relaxes** once the
+  channels drain. (The earlier R²≈0.72 fit was exactly this latched state; a 300 ms fit
+  window hid the failure to recover.)
+- Mechanisms that *force* recovery act on the same elevated activity and therefore also
+  **suppress the peak**: global inhibition $W_{\text{glob}}$ crushes peak and tail
+  together; cranking the channel conductances to restore the peak instead
+  **destabilizes** the bump (it drifts off the cue or flips to the antipode).
+
+The resolution is to **decouple amplitude from recovery**: (1) **amplitude** is supplied
+*feedforward* by the tuned SC drive (Section 7.3), which is not recurrently amplified and
+so does not engage the bistability; (2) **recovery** is supplied by a slow, **global
+(mean-field) adaptation** current — the network analogue of an SK / Ca-activated-K⁺ or
+M-type spike-frequency-adaptation current (Madison & Nicoll 1984; Stocker 2004; Benda &
+Herz 2003; Sanchez-Vives et al. 2000):
+
+$$
+\tau_a\frac{da}{dt} = \overline{r_E} - a,\qquad I^{\text{adapt}} = g_a\,a,
+$$
+
+subtracted **uniformly** from every cell's $u^E$. Three properties make it the right
+tool: it is **slow** ($\tau_a\sim$ hundreds of ms) so $a\approx0$ at the sharp ~55 ms
+peak — *the peak is preserved*; it **accrues over the elevated tail** and so pulls the
+bump back to baseline and **destabilizes the latched broad state** — *true recovery*;
+and it is **global, not per-cell**, which matters because a *per-cell* adaptation makes
+the ring bump **travel** (the adapted peak fatigues and neighbours take over). A uniform
+pull-down has no preferred direction, so the bump stays put, and — combined with the
+supralinear gain — it also **re-narrows** the bump, recovering both rate **and** width.
+Ablating it ($g_a=0$) makes the bump latch elevated again.
+
+This makes the model **semi-emergent**: the SC *shape* (rebound timing, tail) emerges
+from the intrinsic channels and the network, while the SC *amplitude* is a tuned
+feedforward input — the deliberate, minimal departure from full emergence required to
+reproduce a slow component that is simultaneously **tall, transient, and recovering**.
+
+---
+
 ## 9. How each response feature emerges
 
 - **FC**: the brief uniform flash drives every cell → sharp onset transient in PD and anti-PD.
 - **Dip**: the flash recruits feedback inhibition that, lagging by $\tau_I$, transiently overshoots → firing crashes.
-- **SC rebound**: the crash de-inactivates $I_T$; as the bump recovers, $I_T$ (gated to the bump) fires a phasic rebound.
-- **SC tail**: $I_h$ (slow) plus Ca-activated disinhibition sustain elevated firing for hundreds of ms.
-- **Direction selectivity**: the non-saturating `u_E` preserves the bump through the FC, so PD recovers first; the recurrent gate + the reformed bump's lateral inhibition keep the antipode silent — anti-PD shows FC only.
-- **Recovery**: the supralinear gain (monostable bump) + the tuned/global inhibition + the $I_{HD}$ anchor return the bump to a single sharp profile at the cue after the SC decays.
+- **SC onset/shape**: the crash de-inactivates $I_T$; as the bump recovers, $I_T$ (gated to the bump) fires a phasic rebound, and $I_h$ (slow) plus Ca-activated disinhibition shape the tail.
+- **SC amplitude**: the tuned feedforward SC drive $A_{sc}$ lifts the PD bump to ~91 Hz without recurrent runaway (Section 7.3).
+- **Direction selectivity**: the SC drive and $I_T$ rebound are both tuned/gated to the bump; the non-saturating `u_E` preserves the bump through the FC so PD recovers first; the reformed bump's lateral inhibition keeps the antipode silent — anti-PD shows FC only.
+- **Recovery to baseline**: as the SC drive decays, the **global adaptation** $g_a$ pulls the bump back down and destabilizes any elevated state, while the supralinear gain + $I_{HD}$ anchor re-narrow and re-center it — PD and FWHM return to baseline by ~700 ms (Section 8b).
 
 ---
 
 ## 10. Fitting
 
-All 25 parameters are fit **jointly** to the population PSTH
+All 31 parameters are fit **jointly** to the population PSTH
 ([`vivo_target.load_vivo_psth`](vivo_target.py)) by a single objective
 [`loss_joint`](optimization_engine.py) = baseline-geometry regularizers
 (`loss_stage1`: peak ~40 Hz, FWHM 60–90°, single bump, anti-PD silent) + an
-evoked data term (`loss_stage2`: weighted MSE of the PD trace vs. the in-vivo PSTH +
-structural guards: a dip exists, anti-PD silent in the SC window, late-window single
-bump, width recovery). Optimization is **multistart differential evolution**
-(Storn & Price 1997) + L-BFGS polish, keeping the best basin (the 25-D landscape is
-multimodal). The slow component is **never** injected — `loss_stage2` only measures the
-PD trace; the SC must come from the channels, which is verified by **ablation**
-(setting $g_T=g_h=0$ removes the SC). Best fit to date: **R² ≈ 0.72** on the
-[-50, 300] ms window, with a monostable, PD-selective, recovering attractor.
+evoked data term (`loss_stage2`: weighted MSE of the PD trace vs. the in-vivo PSTH over
+the **[-50, 700] ms** window + structural guards: a dip exists, anti-PD silent through
+the SC, late-window single bump, and **two-sided recovery** of both rate and width to
+baseline). Extending the window to 700 ms (vs the earlier 300 ms) is what exposes — and
+then demands — the SC's decay back to baseline.
+
+A practical caveat: `loss_joint` is **not** R²-aligned (its structural regularizers can
+trade data-fit for validity), and the valid *recovering* basin is narrow, so plain
+differential evolution (Storn & Price 1997) under-shoots (~0.6). The reported fit is
+obtained by a **direct R²-search with a validity gate** ([`_run_full_fit.py`](_run_full_fit.py))
+that rejects any non-recovering or degenerate solution (baseline must be a real ~40 Hz
+bump; rate and width must return near baseline by 600 ms). **Ablation** verifies the
+mechanism split: $A_{sc}=0$ collapses the SC amplitude; $g_a=0$ makes the bump latch
+elevated (no recovery). Best fit to date: **R² ≈ 0.88** on the [-50, 700] ms window,
+with a monostable, PD-selective attractor whose SC is tall, transient, and **recovers**
+to baseline in both rate (~92→~40 Hz) and width (FWHM back to ~baseline).
 
 ---
 
@@ -297,7 +375,8 @@ PD trace; the SC must come from the channels, which is verified by **ablation**
 KAPPA_I, W_EI, I_HD, W_GLOBAL`.
 **Stimulus / channels (Stage 2, fit):** `A_fast, fc_stim_duration, stim_delay,
 reversal_potential, g_T, V_half_T, k_T, tau_hT, E_Ca, g_h, V_half_h, tau_h_on,
-tau_h_off, g_dis, tau_dis`.
+tau_h_off, g_dis, tau_dis, g_a, tau_a, A_sc, tau_sc_on, tau_sc_off, sc_delay`
+(the last six: global adaptation and the tuned feedforward SC drive).
 **Fixed constants:** `N=120, DT=0.2, R_MAX=1000, GAIN_SIGMA=35, GAIN_P=2, KAPPA_HD=2,
 K_H_SLOPE=8, DELAY_TAU=40, REC_HALF=10`.
 
@@ -333,4 +412,8 @@ K_H_SLOPE=8, DELAY_TAU=40, REC_HALF=10`.
 - Pinault D (2004). The thalamic reticular nucleus: structure, function and concept. *Brain Res Rev* 46:1–31.
 - Crabtree JW (2018). Functional diversity of thalamic reticular subnetworks. *Front Syst Neurosci* 12:41.
 - Hughes SW, Cope DW, Blethyn KL, Crunelli V (2002). Cellular mechanisms of the slow (<1 Hz) oscillation in thalamocortical neurons in vitro. *Neuron* 33:947–958. (Ca-activated cation current / slow ADP)
+- Madison DV, Nicoll RA (1984). Control of the repetitive discharge of rat CA1 pyramidal neurones in vitro. *J Physiol* 354:319–331. (Ca-activated K⁺ / spike-frequency adaptation)
+- Stocker M (2004). Ca²⁺-activated K⁺ channels: molecular determinants and function of the SK family. *Nat Rev Neurosci* 5:758–770. (SK current)
+- Benda J, Herz AVM (2003). A universal model for spike-frequency adaptation. *Neural Comput* 15:2523–2564.
+- Sanchez-Vives MV, Nowak LG, McCormick DA (2000). Cellular mechanisms of long-lasting adaptation in visual cortical neurons in vitro. *J Neurosci* 20:4286–4299.
 - Storn R, Price K (1997). Differential evolution — a simple and efficient heuristic for global optimization over continuous spaces. *J Glob Optim* 11:341–359.

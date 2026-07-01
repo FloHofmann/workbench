@@ -153,6 +153,21 @@ STAGE2_BOUNDS = [
     (0.0, 2.0),       # g_a   (adaptation conductance; hyperpolarization ~ g_a * a)
     (80.0, 600.0),    # tau_a (adaptation time constant -> sets the recovery/decay
                       #   timescale of the SC back to baseline, ~hundreds of ms)
+    # --- tuned transient SC drive (feedforward phasic re-excitation) ---
+    # A tuned (von-Mises at PD), double-exponential input that turns on after the
+    # dip and sets the SC AMPLITUDE feedforward -- NOT via recurrent amplification.
+    # Rationale (proven by sweeps): an SC strong enough to reach ~91 Hz cannot
+    # EMERGE from recurrence without making the ring bistable (no recovery) or
+    # destabilizing the bump (drift/flip). A feedforward drive decouples amplitude
+    # from recurrence: the monostable + adapting network passively TRACKS this
+    # transient up to ~91 Hz, then follows it back DOWN to baseline as it decays ->
+    # tall AND transient AND recovering. Tuned by HD_SHAPE so it is PD-selective
+    # (anti-PD ~0). Biologically: the phasic re-excitation AD inherits from upstream
+    # (LMN/DTN/sensory) after the startle, shaped by the intrinsic I_T/I_h rebound.
+    (0.0, 200.0),     # A_sc      (SC drive amplitude)
+    (5.0, 40.0),      # tau_sc_on (SC fast rise -> peak ~55 ms)
+    (50.0, 500.0),    # tau_sc_off(SC slow decay -> the long tail to ~700 ms)
+    (0.0, 30.0),      # sc_delay  (SC onset after stim_onset; starts after the dip)
 ]
 
 PARAM_NAMES = [
@@ -183,6 +198,10 @@ PARAM_NAMES = [
     "tau_dis",
     "g_a",
     "tau_a",
+    "A_sc",
+    "tau_sc_on",
+    "tau_sc_off",
+    "sc_delay",
 ]
 
 
@@ -246,7 +265,8 @@ def _simulate_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I
                    A_fast, fc_stim_duration, stim_delay, reversal_potential,
                    g_T, V_half_T, k_T, tau_hT, E_Ca,
                    g_h, V_half_h, tau_h_on, tau_h_off,
-                   g_dis, tau_dis, g_a, tau_a, time):
+                   g_dis, tau_dis, g_a, tau_a,
+                   A_sc, tau_sc_on, tau_sc_off, sc_delay, time):
     # Tuned connectivity (see _simulate_idle): narrow excite, broad inhibit.
     K_E = np.exp(KAPPA_E * (COS_D_THETA - 1.0)) / N
     K_I = np.exp(KAPPA_I * (COS_D_THETA - 1.0)) / N
@@ -289,6 +309,7 @@ def _simulate_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I
     # stim_onset, not T_STIM, so model FC aligns with the in-vivo FC at ~+10 ms.
     stim_onset = T_STIM + stim_delay
     stim_end = stim_onset + fc_stim_duration
+    sc_onset = stim_onset + sc_delay  # SC drive starts after the dip
 
     rates = np.zeros((len(time), N))
     for step in range(len(time)):
@@ -341,6 +362,14 @@ def _simulate_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I
         I_ext = I_ext_base
         if stim_onset <= t < stim_end:
             I_ext = I_ext_base + A_fast
+        # Tuned transient SC drive (double-exponential: fast rise, slow decay),
+        # feedforward (sets SC amplitude without recurrent runaway). PD-tuned via
+        # HD_SHAPE -> anti-PD ~0. The monostable+adapting network tracks it up then
+        # follows it back to baseline.
+        if t >= sc_onset:
+            dt_sc = t - sc_onset
+            g_sc = np.exp(-dt_sc / tau_sc_off) - np.exp(-dt_sc / tau_sc_on)
+            I_ext = I_ext + A_sc * g_sc * HD_SHAPE
 
         # Ca-activated disinhibition (per cell). ca integrates the cell's I_T burst
         # and leaks with tau_dis; disinhib in [floor,1] scales DOWN that cell's
@@ -398,13 +427,15 @@ def run_model_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I
                    g_T, V_half_T, k_T, tau_hT, E_Ca,
                    g_h, V_half_h, tau_h_on, tau_h_off,
                    g_dis, tau_dis, g_a, tau_a,
+                   A_sc, tau_sc_on, tau_sc_off, sc_delay,
                    F_matrix=None, F_inv_matrix=None):
     return _simulate_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I_HD,
                           W_GLOBAL,
                           A_fast, fc_stim_duration, stim_delay, reversal_potential,
                           g_T, V_half_T, k_T, tau_hT, E_Ca,
                           g_h, V_half_h, tau_h_on, tau_h_off,
-                          g_dis, tau_dis, g_a, tau_a, TIME)
+                          g_dis, tau_dis, g_a, tau_a,
+                          A_sc, tau_sc_on, tau_sc_off, sc_delay, TIME)
 
 
 # Precompute the index/angle anchors used by the losses.
@@ -507,6 +538,7 @@ def loss_stage2(params, stage1_frozen, bins_plot, vivo_rate, vivo_smooth):
         g_T, V_half_T, k_T, tau_hT, E_Ca,
         g_h, V_half_h, tau_h_on, tau_h_off,
         g_dis, tau_dis, g_a, tau_a,
+        A_sc, tau_sc_on, tau_sc_off, sc_delay,
     ) = params
 
     tau_E = stage1_frozen["tau_E"]
@@ -526,7 +558,8 @@ def loss_stage2(params, stage1_frozen, bins_plot, vivo_rate, vivo_smooth):
         A_fast, fc_stim_duration, stim_delay, reversal_potential,
         g_T, V_half_T, k_T, tau_hT, E_Ca,
         g_h, V_half_h, tau_h_on, tau_h_off,
-        g_dis, tau_dis, g_a, tau_a, TIME_STAGE2,
+        g_dis, tau_dis, g_a, tau_a,
+        A_sc, tau_sc_on, tau_sc_off, sc_delay, TIME_STAGE2,
     )
 
     if not np.all(np.isfinite(rates)):
