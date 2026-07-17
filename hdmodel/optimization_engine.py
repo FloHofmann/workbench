@@ -45,11 +45,12 @@ REC_HALF = 10.0
 # (Naka-Rushton / SSN) gain to force a monostable ring, but with the SC delivered as
 # an INHERITED input (not recurrently generated) and the bump WIDTH recovered by the
 # global adaptation current, the winner-take-all is unnecessary AND slightly hurts the
-# fit (it distorts the network's tracking of the injected SC): refitting with a plain
-# linear gain RAISED R^2 (0.877 -> 0.932). So the gain is linear; stability against
-# runaway/drift is provided by the global inhibition W_GLOBAL, and width recovery by
-# the adaptation. R_MAX is kept only as a safety clip (never reached in normal fits).
-R_MAX = 1000.0      # rate clip (safety; the evoked range is 0-200 Hz)
+# THRESHOLD-LINEAR gain: r = clip(GAIN_SLOPE*[u]+, 0, R_MAX). The SC is a GLOBAL
+# (untuned) input gated by bump-membership (rec_gate) -- the GATE alone silences the
+# antipode (SC input ~0 where rec_E ~0), so no supralinear winner-take-all is needed.
+# A supralinear gain was tried for the gating but it makes the low-rate late state
+# FRAGILE (the bump collapses to 0 at ~700 ms); the linear gain recovers stably.
+R_MAX = 1000.0      # rate clip (safety; evoked range 0-200 Hz)
 GAIN_SLOPE = 6.0    # f-I slope; baseline operating point u ~ 6-7 -> ~40 Hz
 
 # Stage-specific (short) time grids. Each eval only needs the window the loss reads.
@@ -143,21 +144,21 @@ STAGE2_BOUNDS = [
     (0.0, 2.0),       # g_a   (adaptation conductance; hyperpolarization ~ g_a * a)
     (80.0, 600.0),    # tau_a (adaptation time constant -> sets the recovery/decay
                       #   timescale of the SC back to baseline, ~hundreds of ms)
-    # --- tuned transient SC drive (feedforward phasic re-excitation) ---
-    # A tuned (von-Mises at PD), double-exponential input that turns on after the
-    # dip and sets the SC AMPLITUDE feedforward -- NOT via recurrent amplification.
-    # Rationale (proven by sweeps): an SC strong enough to reach ~91 Hz cannot
-    # EMERGE from recurrence without making the ring bistable (no recovery) or
-    # destabilizing the bump (drift/flip). A feedforward drive decouples amplitude
-    # from recurrence: the monostable + adapting network passively TRACKS this
-    # transient up to ~91 Hz, then follows it back DOWN to baseline as it decays ->
-    # tall AND transient AND recovering. Tuned by HD_SHAPE so it is PD-selective
-    # (anti-PD ~0). Biologically: the phasic re-excitation AD inherits from upstream
-    # (LMN/DTN/sensory) after the startle, shaped by the intrinsic I_T/I_h rebound.
-    (0.0, 200.0),     # A_sc      (SC drive amplitude)
-    (5.0, 40.0),      # tau_sc_on (SC fast rise -> peak ~55 ms)
-    (50.0, 500.0),    # tau_sc_off(SC slow decay -> the long tail to ~700 ms)
-    (0.0, 30.0),      # sc_delay  (SC onset after stim_onset; starts after the dip)
+    # --- GLOBAL SC input, gated by bump-membership (EMERGENT tuning) ---
+    # The SC arrives as a second GLOBAL (spatially UNIFORM) input, double-exponential
+    # in time, after the dip -- like the FC but slower. It is NOT spatially tuned. The
+    # PD-tuned SC OUTPUT emerges because the input is multiplied by the ring's own
+    # bump-membership gate rec_E/(rec_E+REC_HALF) (a network state, not input tuning):
+    # bump cells (rec_E high) respond, the antipode (rec_E ~ 0) does not -> anti-PD
+    # silent. The supralinear gain amplifies the PD response. Biologically: a global
+    # salience/arousal drive that the HD attractor transforms into a tuned SC output.
+    (0.0, 300.0),     # A_sc      (global SC input amplitude)
+    (5.0, 40.0),      # tau_sc_on (fast rise -> peak ~55 ms)
+    (50.0, 500.0),    # tau_sc_off(slow decay -> the tail)
+    (0.0, 30.0),      # sc_delay  (SC onset after stim_onset; after the dip)
+    (5.0, 150.0),     # tau_scg   (SC gate memory: low-passes rec_E so the gate does
+                      #   not slam shut during the brief dip -> smooth SC onset, no
+                      #   spike. Antipode rec_E ~0 -> gate stays ~0 -> still silent.)
 ]
 
 PARAM_NAMES = [
@@ -190,6 +191,7 @@ PARAM_NAMES = [
     "tau_sc_on",
     "tau_sc_off",
     "sc_delay",
+    "tau_scg",
 ]
 
 
@@ -203,8 +205,8 @@ PARAM_NAMES = [
 # ---------------------------------------------------------------------------
 @njit(fastmath=True, cache=True)
 def _gain(u):
-    """Threshold-linear f-I curve, r = clip(GAIN_SLOPE*[u]+, 0, R_MAX). (A supralinear
-    SSN gain was tried and dropped -- see the note at GAIN_SLOPE.)"""
+    """Threshold-linear f-I curve, r = clip(GAIN_SLOPE*[u]+, 0, R_MAX). Antipode
+    silencing comes from the rec_gate on the SC input, not from the gain."""
     return np.minimum(R_MAX, GAIN_SLOPE * np.maximum(0.0, u))
 
 
@@ -253,7 +255,7 @@ def _simulate_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I
                    g_T, V_half_T, k_T, tau_hT, E_Ca,
                    g_h, V_half_h, tau_h_on, tau_h_off,
                    g_a, tau_a,
-                   A_sc, tau_sc_on, tau_sc_off, sc_delay, time):
+                   A_sc, tau_sc_on, tau_sc_off, sc_delay, tau_scg, time):
     # Tuned connectivity (see _simulate_idle): narrow excite, broad inhibit.
     K_E = np.exp(KAPPA_E * (COS_D_THETA - 1.0)) / N
     K_I = np.exp(KAPPA_I * (COS_D_THETA - 1.0)) / N
@@ -279,12 +281,16 @@ def _simulate_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I
     # it leaves the bump stuck broad, FWHM ~105 vs ~69 deg).
     a = 0.0
 
+    # SC gate memory: low-passed recurrent drive (per cell). Charges to the baseline
+    # bump during burn-in; bridges the brief dip so the SC gate stays open on the bump.
+    sc_lp = np.zeros(N)
+
     I_ext_base = I_baseline + I_HD * HD_SHAPE  # tonic upstream HD drive (loop-invariant)
     # Conduction latency: the flash (and the whole evoked cascade) starts at
     # stim_onset, not T_STIM, so model FC aligns with the in-vivo FC at ~+10 ms.
     stim_onset = T_STIM + stim_delay
     stim_end = stim_onset + fc_stim_duration
-    sc_onset = stim_onset + sc_delay  # SC drive starts after the dip
+    sc_onset = stim_onset + sc_delay  # global SC input starts after the dip
 
     rates = np.zeros((len(time), N))
     for step in range(len(time)):
@@ -294,6 +300,13 @@ def _simulate_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I
         # once: it both drives u_E and GATES I_T (rec_gate) so the rebound is
         # confined to the bump.
         rec_E = J1 * (K_E @ r_E)
+        # Bump-membership gate for I_T (instantaneous): ~1 on the bump, ~0 at antipode.
+        rec_gate = rec_E / (rec_E + REC_HALF)
+        # SC gate: same idea but on a low-passed rec_E (memory tau_scg), so the brief
+        # dip does not slam it shut -> the SC enters smoothly, no spike. Antipode
+        # rec_E ~0 -> sc_lp ~0 -> gate ~0 -> still silent.
+        sc_lp += (rec_E - sc_lp) * (DT / tau_scg)
+        sc_gate = sc_lp / (sc_lp + REC_HALF)
 
         # Intrinsic currents are GATED OFF (gates frozen at 0, currents 0) until
         # the flash actually arrives (stim_onset). Pre-stim the off-bump cells are
@@ -312,10 +325,8 @@ def _simulate_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I
             m_T = 1.0 / (1.0 + np.exp(-(u_E - V_half_T) / k_T))
             h_inf = 1.0 / (1.0 + np.exp((u_E - V_half_T) / k_T))
             h_T += (h_inf - h_T) * (DT / tau_hT)
-            # Recurrent gate: I_T expresses only where recurrent drive exists (the
-            # bump). Off-bump cells have rec_E ~ 0 -> rec_gate ~ 0 -> no rebound,
-            # so it stays spatially confined and the attractor re-converges.
-            rec_gate = rec_E / (rec_E + REC_HALF)
+            # I_T expresses only where recurrent drive exists (rec_gate, computed
+            # above), so the rebound stays confined to the bump.
             I_T = g_T * m_T * h_T * (E_Ca - u_E) * rec_gate
 
             # I_h (HCN). Slow activation by hyperpolarization; additive (NOT
@@ -337,19 +348,15 @@ def _simulate_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I
         I_ext = I_ext_base
         if stim_onset <= t < stim_end:
             I_ext = I_ext_base + A_fast
-        # Tuned transient SC drive (double-exponential: fast rise, slow decay),
-        # feedforward (sets SC amplitude without recurrent runaway). PD-tuned via
-        # HD_SHAPE -> anti-PD ~0. The monostable+adapting network tracks it up then
-        # follows it back to baseline.
+        # GLOBAL SC input (spatially uniform double-exponential), gated by
+        # bump-membership -> tuned SC OUTPUT, antipode silent. The tuning is a
+        # network property (rec_gate), NOT spatial tuning of the input.
         if t >= sc_onset:
             dt_sc = t - sc_onset
             g_sc = np.exp(-dt_sc / tau_sc_off) - np.exp(-dt_sc / tau_sc_on)
-            I_ext = I_ext + A_sc * g_sc * HD_SHAPE
+            I_ext = I_ext + A_sc * g_sc * sc_gate
 
-        # Slow global adaptation: a low-pass-tracks the mean rate (tau_a, slow) ->
-        # uniform hyperpolarizing I_adapt = g_a*a. Gated off pre-stim. Slow => ~0 at
-        # the sharp SC peak (peak preserved) but accrues over the tail => pulls the
-        # bump back down and re-narrows it => width recovery.
+        # Slow global adaptation (width recovery), gated off pre-stim.
         if t < stim_onset:
             I_adapt = 0.0
         else:
@@ -391,7 +398,7 @@ def run_model_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I
                    g_T, V_half_T, k_T, tau_hT, E_Ca,
                    g_h, V_half_h, tau_h_on, tau_h_off,
                    g_a, tau_a,
-                   A_sc, tau_sc_on, tau_sc_off, sc_delay,
+                   A_sc, tau_sc_on, tau_sc_off, sc_delay, tau_scg,
                    F_matrix=None, F_inv_matrix=None):
     return _simulate_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I_HD,
                           W_GLOBAL,
@@ -399,7 +406,7 @@ def run_model_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I
                           g_T, V_half_T, k_T, tau_hT, E_Ca,
                           g_h, V_half_h, tau_h_on, tau_h_off,
                           g_a, tau_a,
-                          A_sc, tau_sc_on, tau_sc_off, sc_delay, TIME)
+                          A_sc, tau_sc_on, tau_sc_off, sc_delay, tau_scg, TIME)
 
 
 # Precompute the index/angle anchors used by the losses.
@@ -492,17 +499,17 @@ def loss_stage2(params, stage1_frozen, bins_plot, vivo_rate, vivo_smooth):
 
     Fits the model PD trace to the REAL population PSTH (vivo_rate / vivo_smooth
     from vivo_target.load_vivo_psth) via a hybrid raw-early / smooth-late MSE.
-    The SC amplitude is carried by the tuned feedforward SC drive (an inherited
-    input) and shaped by the I_T/I_h channels; only light *structural* regularizers
-    are added (anti-PD silence, single bump, width recovery) so the optimizer can't
-    match the trace by destroying the attractor.
+    The SC OUTPUT emerges from a GLOBAL (untuned) SC input gated by bump-membership
+    (rec_gate) and amplified by the supralinear gain; only light *structural*
+    regularizers are added (anti-PD silence, single bump, width recovery) so the
+    optimizer can't match the trace by destroying the attractor.
     """
     (
         A_fast, fc_stim_duration, stim_delay, reversal_potential,
         g_T, V_half_T, k_T, tau_hT, E_Ca,
         g_h, V_half_h, tau_h_on, tau_h_off,
         g_a, tau_a,
-        A_sc, tau_sc_on, tau_sc_off, sc_delay,
+        A_sc, tau_sc_on, tau_sc_off, sc_delay, tau_scg,
     ) = params
 
     tau_E = stage1_frozen["tau_E"]
@@ -523,7 +530,7 @@ def loss_stage2(params, stage1_frozen, bins_plot, vivo_rate, vivo_smooth):
         g_T, V_half_T, k_T, tau_hT, E_Ca,
         g_h, V_half_h, tau_h_on, tau_h_off,
         g_a, tau_a,
-        A_sc, tau_sc_on, tau_sc_off, sc_delay, TIME_STAGE2,
+        A_sc, tau_sc_on, tau_sc_off, sc_delay, tau_scg, TIME_STAGE2,
     )
 
     if not np.all(np.isfinite(rates)):

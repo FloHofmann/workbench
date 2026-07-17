@@ -23,7 +23,7 @@ _S1_KEYS = ["tau_E", "tau_I", "I_baseline", "J1", "KAPPA_E", "W_IE", "KAPPA_I", 
 # Indices INSIDE the stage-2 parameter vector (PARAM_NAMES[10:]) for ablation.
 _GT_IDX, _GH_IDX = 4, 9      # g_T, g_h (intrinsic channels)
 _GA_IDX = 13                 # g_a  (global adaptation -> width recovery)
-_ASC_IDX = 15                # A_sc (tuned feedforward SC drive -> SC amplitude)
+_SC_IDX = 15                 # A_sc (global SC input amplitude -> the SC hump)
 
 
 def _run(stage1_frozen, stage2_params):
@@ -56,10 +56,10 @@ def diagnose(stage1_frozen, stage2_params, vivo=None, title="", t_lo=None, t_hi=
     idx_90 = int(np.argmin(np.abs(oe.THETA - np.pi / 2)))
     pd90 = rates[:, idx_90]
 
-    # Ablation: zero the tuned SC drive -> the SC amplitude must collapse toward
-    # baseline (the drive is what sets the ~91 Hz hump; channels only shape it).
+    # Ablation: zero the global SC input -> the SC hump must collapse toward
+    # baseline (A_sc is the drive the bump gates into the tuned SC output).
     abl = list(stage2_params)
-    abl[_ASC_IDX] = 0.0
+    abl[_SC_IDX] = 0.0
     _, rates_abl = _run(stage1_frozen, abl)
     pd_abl = rates_abl[:, oe._IDX_0]
 
@@ -78,7 +78,7 @@ def diagnose(stage1_frozen, stage2_params, vivo=None, title="", t_lo=None, t_hi=
     ax.plot(bins[vwin], vrate[vwin], color="0.4", lw=1.5, label="in vivo (raw)")
     ax.plot(bins[vwin], vsmooth[vwin], color="0.4", ls="--", lw=1.5, label="in vivo (smooth)")
     ax.plot(t, pd, color="crimson", lw=2.2, label="model PD (0deg)")
-    ax.plot(t, pd_abl, color="crimson", ls=":", lw=1.5, label="model PD, A_sc=0 (SC drive off)")
+    ax.plot(t, pd_abl, color="crimson", ls=":", lw=1.5, label="model PD, A_sc=0 (SC input off)")
     ax.set_xlim(t_lo, t_hi)
     ax.set_ylim(0, np.max(vrate[vwin]) + 0.125*np.max(vrate[vwin]))
     ax.set_xlabel("time rel. stim (ms)"); ax.set_ylabel("firing rate (Hz)")
@@ -126,7 +126,7 @@ def diagnose(stage1_frozen, stage2_params, vivo=None, title="", t_lo=None, t_hi=
     ax.plot(t, r_na[:, oe._IDX_0], color="darkorange", lw=1.6,
             label="g_a=0 (no adaptation -> latches)")
     ax.plot(t, r_nc[:, oe._IDX_0], color="seagreen", lw=1.4, label="g_T=g_h=0 (no channels)")
-    ax.plot(t, pd_abl, color="0.5", ls=":", lw=1.4, label="A_sc=0 (no SC drive)")
+    ax.plot(t, pd_abl, color="0.5", ls=":", lw=1.4, label="A_sc=0 (no SC input)")
     ax.set_xlim(t_lo, t_hi)
     ax.set_ylim(0, np.max(pd) + 0.125*np.max(pd))
     ax.set_xlabel("time rel. stim (ms)"); ax.set_ylabel("PD firing rate (Hz)")

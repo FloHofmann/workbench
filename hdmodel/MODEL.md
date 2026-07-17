@@ -19,11 +19,12 @@ cells (population PSTH, preferred-direction cells):
    *transient*, not a new sustained plateau).
 
 In **anti-preferred-direction (anti-PD)** cells only the FC appears — the dip and SC
-are **direction-selective**. We first sought to make every component **emerge** from
-AD's own biophysics; a key result (Section 8b) is that a tall, recovering SC *cannot*
-emerge from the AD ring alone. The model therefore treats the FC and SC as **inherited
-inputs** (their upstream source is left open — see Section 8b), while the **dip**,
-**direction-selectivity**, and the **recovery** are genuine AD-network properties.
+are **direction-selective**. Both evoked drives (FC and SC) arrive as **global, spatially
+UNTUNED inputs** — the FC a fast auditory volley, the SC a slower global salience/arousal
+drive (their upstream source is left open). Crucially the SC's **direction-selectivity is
+NOT in the input**: the ring gates the global SC by bump-membership, so the tuned SC
+**output** emerges from the network (Section 7.3). The **dip**, **selectivity**, and
+**recovery** are likewise genuine AD-network properties, not imposed on any input.
 
 The substrate is the HD system: HD cells fire as a function of head azimuth and are
 thought to be maintained by a **continuous (ring) attractor** — a localized "bump" of
@@ -52,9 +53,10 @@ qualitative biophysics (cf. Destexhe et al. 1996 for the reduced T-current).
 | Ring of `N=120` excitatory cells + interneurons | tuned Mexican-hat connectivity | the HD bump | CANN / ring attractor |
 | Threshold-linear gain `r = f(u)` | `clip(GAIN_SLOPE·[u]₊, 0, R_MAX)` | firing rate | linear f-I (supralinear tested & dropped) |
 | Tonic tuned drive `I_HD` | upstream HD input | baseline tuning + anchoring | LMN/DTN → AD |
-| **Inherited** FC volley `A_fast` | brief untuned sensory input | **FC** | auditory volley (ubiquitous ⇒ untuned) |
+| Global FC volley `A_fast` | brief untuned sensory input | **FC** | auditory volley (ubiquitous ⇒ untuned) |
 | Feedback inhibition | interneuron ring | **dip** (emergent) | feedforward/feedback inhibition |
-| **Inherited** tuned SC drive `A_sc` | feedforward double-exponential at PD | **SC amplitude** (the ~91 Hz hump) | upstream phasic re-excitation (tuned ⇒ HD pathway) |
+| Global SC input `A_sc` × bump-gate | untuned double-exp × `rec_gate` | **tuned SC output** (~91 Hz hump) | global salience drive gated by the HD bump |
+| SC gate memory `tau_scg` | low-passed `rec_E` | bridges the dip ⇒ smooth SC onset | synaptic/membrane memory of bump-membership |
 | `I_T` (T-type Ca²⁺) | de-inactivation + activation gates | SC rebound **shaping** (~0.10 R²) | thalamic rebound burst |
 | `I_h` (HCN) | slow hyperpolarization-activated current | SC tail **shaping** | thalamic sag/ADP |
 | recurrent gating of `I_T` | only bump cells rebound | spatial confinement | rebound needs depolarizing drive |
@@ -233,27 +235,39 @@ when decaying ($\tau_{h,\text{off}}$, hundreds of ms) — reflecting the strongl
 voltage-dependent activation kinetics of HCN. The fast charge lets it build during the
 brief dip; the slow decay produces the **long SC tail**.
 
-### 7.3 Tuned feedforward SC drive (the SC amplitude)
+### 7.3 Global SC input gated by bump-membership (the SC output *emerges*)
 
 The intrinsic rebound currents above **shape** the SC, but they cannot by themselves
-set its *amplitude* without breaking the attractor (see Section 8b). The SC amplitude is
-therefore supplied by a tuned, feedforward transient input — a double-exponential
-(fast rise, slow decay) that turns on after the dip and is tuned to the cue direction:
+build its ~91 Hz *amplitude* without breaking the attractor (see Section 8b). The SC
+amplitude comes from a second **GLOBAL, spatially UNIFORM** input — a double-exponential
+(fast rise, slow decay) after the dip — that is *not* tuned to the cue. Its
+direction-selectivity **emerges**: the input is multiplied by the ring's own
+**bump-membership gate** $\text{sc\_gate}$ (a network state, not a property of the input):
 
 $$
 I^{SC}_i(t) = A_{sc}\,\Big(e^{-\Delta t/\tau^{\text{off}}_{sc}} - e^{-\Delta t/\tau^{\text{on}}_{sc}}\Big)\,
-e^{\kappa_{HD}(\cos\theta_i-1)},\qquad \Delta t = t - (t_0 + \text{sc\_delay}),
+\text{sc\_gate}_i,\qquad \Delta t = t - (t_0 + \text{sc\_delay}),
 $$
 
-active for $t\ge t_0+\text{sc\_delay}$. Because it is **feedforward**, it sets the SC
-amplitude *without* recurrent amplification, so the (linear) adapting network simply
-**tracks** it up to ~91 Hz and then follows it back down as it decays — the SC stays
-tall *and* transient. Because it is **tuned** ($\propto e^{\kappa_{HD}(\cos\theta-1)}$,
-the same shape as $I_{HD}$), it is ≈0 at the antipode, so the SC is **PD-selective**
-for free (anti-PD shows only the FC). Biologically this is the phasic re-excitation AD
-inherits from upstream HD / sensory structures after the startle, riding on top of the
-intrinsic $I_T$/$I_h$ rebound. Ablating it ($A_{sc}=0$) collapses the SC amplitude
-toward baseline — the evidence that the drive supplies the hump.
+active for $t\ge t_0+\text{sc\_delay}$. The gate is the same bump-membership signal that
+confines $I_T$, but **low-passed** (memory $\tau_{scg}$) so the brief dip does not slam it
+shut:
+
+$$
+\tau_{scg}\,\dot{\ell}_i = \text{rec}_i - \ell_i,\qquad
+\text{sc\_gate}_i = \frac{\ell_i}{\ell_i + \text{REC}_{1/2}},\qquad \text{rec}_i=J_1(K^E r_E)_i.
+$$
+
+**Why it works.** Bump cells ($\text{rec}_i$ high) receive the SC → the PD bump rises to
+~91 Hz; the antipode ($\text{rec}_i\approx0 \Rightarrow \ell_i\approx0 \Rightarrow
+\text{sc\_gate}\approx0$) receives ≈nothing → **anti-PD stays silent** even though the
+*input* is global. The **memory** $\tau_{scg}$ (~30 ms) is essential: without it the gate
+crashes during the dip and re-opens abruptly at ~50 ms, dumping the SC in as a sharp
+spike; the low-pass bridges the dip so the SC enters smoothly (matching the data's early
+rise). Biologically: a global salience/arousal drive that the HD attractor **transforms**
+into a tuned output — the SC is an *ADN output*, not a tuned input. Ablating it
+($A_{sc}=0$) collapses the SC (88→55 Hz) — the evidence that the gated global input builds
+the hump.
 
 ---
 
@@ -285,7 +299,7 @@ rebound) and tall enough to reach ~91 Hz is **incompatible with recovery**:
   **destabilizes** the bump (it drifts off the cue or flips to the antipode).
 
 The resolution is to **decouple amplitude from recovery**: (1) **amplitude** is supplied
-*feedforward* by the tuned SC drive (Section 7.3), which is not recurrently amplified and
+by the gated global SC input (Section 7.3), which is not recurrently self-amplified and
 so does not engage the bistability; (2) **recovery** is supplied by a slow, **global
 (mean-field) adaptation** current — the network analogue of an SK / Ca-activated-K⁺ or
 M-type spike-frequency-adaptation current (Madison & Nicoll 1984; Stocker 2004; Benda &
@@ -306,11 +320,11 @@ the bump, recovering both rate **and** width. It is the one genuinely load-beari
 recovery mechanism: ablating it ($g_a=0$) leaves the bump stuck broad (FWHM ~105 vs
 ~69°).
 
-This makes the model **semi-emergent**: the SC *shape* (rebound timing, tail) is shaped
-by the intrinsic channels and the network, while the SC *amplitude* is a tuned
-feedforward (inherited) input — the deliberate, minimal departure from full emergence
-required to reproduce a slow component that is simultaneously **tall, transient, and
-recovering**.
+This makes the SC's **direction-tuning fully emergent**: every input (FC and SC) is
+spatially **global/untuned**, and the PD-selective SC output is produced entirely by the
+network — the bump-membership gate silences the antipode, the intrinsic channels shape the
+onset/tail, and adaptation recovers the width. Only the SC's *temporal* profile is an
+inherited input (like the FC); its *spatial* structure is the ring's own doing.
 
 ---
 
@@ -319,15 +333,15 @@ recovering**.
 - **FC**: the brief uniform flash drives every cell → sharp onset transient in PD and anti-PD.
 - **Dip**: the flash recruits feedback inhibition that, lagging by $\tau_I$, transiently overshoots → firing crashes.
 - **SC onset/shape**: the crash de-inactivates $I_T$; as the bump recovers, $I_T$ (gated to the bump) fires a phasic rebound, and $I_h$ (slow) shapes the tail.
-- **SC amplitude**: the tuned feedforward (inherited) SC drive $A_{sc}$ lifts the PD bump to ~91 Hz without recurrent runaway (Section 7.3).
-- **Direction selectivity**: the SC drive and $I_T$ rebound are both tuned/gated to the bump; the non-saturating `u_E` preserves the bump through the FC so PD recovers first; the reformed bump's lateral inhibition keeps the antipode silent — anti-PD shows FC only.
-- **Recovery to baseline**: as the SC drive decays, the **global adaptation** $g_a$ pulls the bump back down and re-narrows it, while $W_{\text{glob}}$ + the $I_{HD}$ anchor keep it stable and centered — PD and FWHM return to baseline by ~700 ms (Section 8b).
+- **SC amplitude**: the **global** SC input, gated by bump-membership and low-pass-smoothed ($\tau_{scg}$), lifts the PD bump to ~91 Hz (Section 7.3).
+- **Direction selectivity**: the SC input is global but the bump-gate ($\approx0$ at the antipode) admits it only on the bump; the $I_T$ rebound is likewise gated; the non-saturating `u_E` preserves the bump through the FC — so PD carries the SC and **anti-PD shows FC only**.
+- **Recovery to baseline**: as the global SC input decays, the **global adaptation** $g_a$ pulls the bump back down and re-narrows it, while $W_{\text{glob}}$ + the $I_{HD}$ anchor keep it stable and centered — PD and FWHM return to baseline by ~700 ms (Section 8b).
 
 ---
 
 ## 10. Fitting
 
-All 29 parameters are fit **jointly** to the population PSTH
+All 30 parameters are fit **jointly** to the population PSTH
 ([`vivo_target.load_vivo_psth`](vivo_target.py)) by a single objective
 [`loss_joint`](optimization_engine.py) = baseline-geometry regularizers
 (`loss_stage1`: peak ~40 Hz, FWHM 60–90°, single bump, anti-PD silent) + an
@@ -343,11 +357,11 @@ differential evolution (Storn & Price 1997) under-shoots (~0.6). The reported fi
 obtained by a **direct R²-search with a validity gate** ([`_run_full_fit.py`](_run_full_fit.py))
 that rejects any non-recovering or degenerate solution (baseline must be a real ~40 Hz
 bump; rate and width must return near baseline by 600 ms). **Ablation** verifies the
-mechanism split: $A_{sc}=0$ collapses the SC amplitude; $g_a=0$ leaves the bump stuck
-broad; $W_{\text{glob}}=0$ makes it blow up. Best fit: **R² ≈ 0.94** on the [-50, 700] ms
-window (the linear gain beats the earlier supralinear 0.88), with a PD-selective
-attractor whose SC is tall, transient, and **recovers** to baseline in both rate
-(~95→~40 Hz) and width.
+mechanism split: $A_{sc}=0$ collapses the SC (88→55 Hz); $g_a=0$ leaves the bump stuck
+broad; $W_{\text{glob}}=0$ makes it blow up. Best fit: **R² ≈ 0.92** on the [-50, 700] ms
+window — with a **fully untuned SC input** whose tuned, PD-selective output emerges from
+the bump-gate. (An earlier version that injected a *spatially tuned* SC reached 0.945;
+the ~0.03 cost buys emergent tuning — anti-PD 0, SC ~88 Hz decaying to baseline.)
 
 ---
 
@@ -357,8 +371,8 @@ attractor whose SC is tall, transient, and **recovers** to baseline in both rate
 KAPPA_I, W_EI, I_HD, W_GLOBAL`.
 **Stimulus / channels (Stage 2, fit):** `A_fast, fc_stim_duration, stim_delay,
 reversal_potential, g_T, V_half_T, k_T, tau_hT, E_Ca, g_h, V_half_h, tau_h_on,
-tau_h_off, g_a, tau_a, A_sc, tau_sc_on, tau_sc_off, sc_delay`
-(the last six: global adaptation and the tuned feedforward SC drive).
+tau_h_off, g_a, tau_a, A_sc, tau_sc_on, tau_sc_off, sc_delay, tau_scg`
+(the last seven: global adaptation and the global SC input + its bump-gate memory).
 **Fixed constants:** `N=120, DT=0.2, GAIN_SLOPE=6, R_MAX=1000 (safety clip),
 KAPPA_HD=2, K_H_SLOPE=8, REC_HALF=10`.
 
