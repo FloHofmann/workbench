@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python _stf_probe.py)"
+    ]
+  }
+}
