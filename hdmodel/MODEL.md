@@ -55,7 +55,7 @@ qualitative biophysics (cf. Destexhe et al. 1996 for the reduced T-current).
 | Tonic tuned drive `I_HD` | upstream HD input | baseline tuning + anchoring | LMN/DTN → AD |
 | Global FC volley `A_fast` | brief untuned sensory input | **FC** | auditory volley (ubiquitous ⇒ untuned) |
 | Feedback inhibition | interneuron ring | **dip** (emergent) | feedforward/feedback inhibition |
-| Global SC input `A_sc` × bump-gate | untuned double-exp × `rec_gate` | **tuned SC output** (~91 Hz hump) | global salience drive gated by the HD bump |
+| Global SC input `A_sc` × bump-gate | untuned NMDA-EPSC (bi-exp) × `rec_gate` | **tuned SC output** (~91 Hz hump) | global glutamatergic (NMDA) drive gated by the HD bump |
 | SC gate memory `tau_scg` | low-passed `rec_E` | bridges the dip ⇒ smooth SC onset | synaptic/membrane memory of bump-membership |
 | `I_T` (T-type Ca²⁺) | de-inactivation + activation gates | SC rebound **shaping** (~0.10 R²) | thalamic rebound burst |
 | `I_h` (HCN) | slow hyperpolarization-activated current | SC tail **shaping** | thalamic sag/ADP |
@@ -239,15 +239,23 @@ brief dip; the slow decay produces the **long SC tail**.
 
 The intrinsic rebound currents above **shape** the SC, but they cannot by themselves
 build its ~91 Hz *amplitude* without breaking the attractor (see Section 8b). The SC
-amplitude comes from a second **GLOBAL, spatially UNIFORM** input — a double-exponential
-(fast rise, slow decay) after the dip — that is *not* tuned to the cue. Its
+amplitude comes from a second **GLOBAL, spatially UNIFORM** input — an **NMDA-like EPSC**
+(a rise × bi-exponential decay) after the dip — that is *not* tuned to the cue. Its
 direction-selectivity **emerges**: the input is multiplied by the ring's own
 **bump-membership gate** $\text{sc\_gate}$ (a network state, not a property of the input):
 
 $$
-I^{SC}_i(t) = A_{sc}\,\Big(e^{-\Delta t/\tau^{\text{off}}_{sc}} - e^{-\Delta t/\tau^{\text{on}}_{sc}}\Big)\,
-\text{sc\_gate}_i,\qquad \Delta t = t - (t_0 + \text{sc\_delay}),
+I^{SC}_i(t) = A_{sc}\,\underbrace{\Big(1-e^{-\Delta t/\tau^{\text{on}}_{sc}}\Big)}_{\text{rise}}
+\underbrace{\Big(w\,e^{-\Delta t/\tau^{\text{off}}_{sc}} + (1{-}w)\,e^{-\Delta t/\tau^{\text{off2}}_{sc}}\Big)}_{\text{bi-exp decay (GluN2B slow + GluN2A fast)}}
+\,\text{sc\_gate}_i,\qquad \Delta t = t - (t_0 + \text{sc\_delay}),
 $$
+
+The two decay components (fitted: slow $\tau^{\text{off}}_{sc}\!\approx\!416$ ms with weight
+$w\!\approx\!0.70$, fast $\tau^{\text{off2}}_{sc}\!\approx\!60$ ms) mirror the GluN2B / GluN2A
+NMDA EPSC. The second component is **not required** by the fit (a single decay already
+fits the smooth tail; R² 0.918→0.921, flat) — it makes the input *literally* an NMDA
+EPSC, matching the **SC = NMDA-gated global drive** hypothesis (the voltage-dependent
+Mg²⁺-block of the same NMDARs is the natural biophysical basis of the bump-gate below).
 
 active for $t\ge t_0+\text{sc\_delay}$. The gate is the same bump-membership signal that
 confines $I_T$, but **low-passed** (memory $\tau_{scg}$) so the brief dip does not slam it
@@ -341,7 +349,7 @@ inherited input (like the FC); its *spatial* structure is the ring's own doing.
 
 ## 10. Fitting
 
-All 30 parameters are fit **jointly** to the population PSTH
+All 32 parameters are fit **jointly** to the population PSTH
 ([`vivo_target.load_vivo_psth`](vivo_target.py)) by a single objective
 [`loss_joint`](optimization_engine.py) = baseline-geometry regularizers
 (`loss_stage1`: peak ~40 Hz, FWHM 60–90°, single bump, anti-PD silent) + an
@@ -371,8 +379,9 @@ the ~0.03 cost buys emergent tuning — anti-PD 0, SC ~88 Hz decaying to baselin
 KAPPA_I, W_EI, I_HD, W_GLOBAL`.
 **Stimulus / channels (Stage 2, fit):** `A_fast, fc_stim_duration, stim_delay,
 reversal_potential, g_T, V_half_T, k_T, tau_hT, E_Ca, g_h, V_half_h, tau_h_on,
-tau_h_off, g_a, tau_a, A_sc, tau_sc_on, tau_sc_off, sc_delay, tau_scg`
-(the last seven: global adaptation and the global SC input + its bump-gate memory).
+tau_h_off, g_a, tau_a, A_sc, tau_sc_on, tau_sc_off, sc_delay, tau_scg, tau_sc_off2, w_sc`
+(the last nine: global adaptation + the global NMDA-EPSC SC input (bi-exponential decay
+`tau_sc_off`/`tau_sc_off2`/`w_sc`) + its bump-gate memory `tau_scg`).
 **Fixed constants:** `N=120, DT=0.2, GAIN_SLOPE=6, R_MAX=1000 (safety clip),
 KAPPA_HD=2, K_H_SLOPE=8, REC_HALF=10`.
 

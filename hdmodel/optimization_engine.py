@@ -152,13 +152,20 @@ STAGE2_BOUNDS = [
     # bump cells (rec_E high) respond, the antipode (rec_E ~ 0) does not -> anti-PD
     # silent. The supralinear gain amplifies the PD response. Biologically: a global
     # salience/arousal drive that the HD attractor transforms into a tuned SC output.
-    (0.0, 300.0),     # A_sc      (global SC input amplitude)
-    (5.0, 40.0),      # tau_sc_on (fast rise -> peak ~55 ms)
-    (50.0, 500.0),    # tau_sc_off(slow decay -> the tail)
-    (0.0, 30.0),      # sc_delay  (SC onset after stim_onset; after the dip)
-    (5.0, 150.0),     # tau_scg   (SC gate memory: low-passes rec_E so the gate does
+    # The SC input is a BI-EXPONENTIAL EPSC (NMDA form): a rise (1-exp(-/tau_sc_on))
+    # times a two-component decay (w_sc on the slow tau_sc_off + (1-w_sc) on the fast
+    # tau_sc_off2) -- i.e. GluN2A (fast) + GluN2B (slow). The 2nd decay is not demanded
+    # by the fit (a single decay already fits the smooth tail); it makes the input
+    # LITERALLY an NMDA EPSC, matching the "SC = NMDA-gated global drive" hypothesis.
+    (0.0, 300.0),     # A_sc       (global SC input amplitude)
+    (5.0, 40.0),      # tau_sc_on  (EPSC rise)
+    (50.0, 500.0),    # tau_sc_off (slow decay component, GluN2B-like)
+    (0.0, 30.0),      # sc_delay   (SC onset after stim_onset; after the dip)
+    (5.0, 150.0),     # tau_scg    (SC gate memory: low-passes rec_E so the gate does
                       #   not slam shut during the brief dip -> smooth SC onset, no
                       #   spike. Antipode rec_E ~0 -> gate stays ~0 -> still silent.)
+    (5.0, 150.0),     # tau_sc_off2(fast decay component, GluN2A-like)
+    (0.0, 1.0),       # w_sc       (weight on the SLOW decay; 1 => back to mono-exp)
 ]
 
 PARAM_NAMES = [
@@ -192,6 +199,8 @@ PARAM_NAMES = [
     "tau_sc_off",
     "sc_delay",
     "tau_scg",
+    "tau_sc_off2",
+    "w_sc",
 ]
 
 
@@ -255,7 +264,8 @@ def _simulate_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I
                    g_T, V_half_T, k_T, tau_hT, E_Ca,
                    g_h, V_half_h, tau_h_on, tau_h_off,
                    g_a, tau_a,
-                   A_sc, tau_sc_on, tau_sc_off, sc_delay, tau_scg, time):
+                   A_sc, tau_sc_on, tau_sc_off, sc_delay, tau_scg,
+                   tau_sc_off2, w_sc, time):
     # Tuned connectivity (see _simulate_idle): narrow excite, broad inhibit.
     K_E = np.exp(KAPPA_E * (COS_D_THETA - 1.0)) / N
     K_I = np.exp(KAPPA_I * (COS_D_THETA - 1.0)) / N
@@ -353,7 +363,9 @@ def _simulate_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I
         # network property (rec_gate), NOT spatial tuning of the input.
         if t >= sc_onset:
             dt_sc = t - sc_onset
-            g_sc = np.exp(-dt_sc / tau_sc_off) - np.exp(-dt_sc / tau_sc_on)
+            # NMDA-like EPSC: rise * bi-exponential decay (GluN2A fast + GluN2B slow).
+            decay = w_sc * np.exp(-dt_sc / tau_sc_off) + (1.0 - w_sc) * np.exp(-dt_sc / tau_sc_off2)
+            g_sc = decay * (1.0 - np.exp(-dt_sc / tau_sc_on))
             I_ext = I_ext + A_sc * g_sc * sc_gate
 
         # Slow global adaptation (width recovery), gated off pre-stim.
@@ -399,6 +411,7 @@ def run_model_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I
                    g_h, V_half_h, tau_h_on, tau_h_off,
                    g_a, tau_a,
                    A_sc, tau_sc_on, tau_sc_off, sc_delay, tau_scg,
+                   tau_sc_off2, w_sc,
                    F_matrix=None, F_inv_matrix=None):
     return _simulate_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I_HD,
                           W_GLOBAL,
@@ -406,7 +419,8 @@ def run_model_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I
                           g_T, V_half_T, k_T, tau_hT, E_Ca,
                           g_h, V_half_h, tau_h_on, tau_h_off,
                           g_a, tau_a,
-                          A_sc, tau_sc_on, tau_sc_off, sc_delay, tau_scg, TIME)
+                          A_sc, tau_sc_on, tau_sc_off, sc_delay, tau_scg,
+                          tau_sc_off2, w_sc, TIME)
 
 
 # Precompute the index/angle anchors used by the losses.
@@ -510,6 +524,7 @@ def loss_stage2(params, stage1_frozen, bins_plot, vivo_rate, vivo_smooth):
         g_h, V_half_h, tau_h_on, tau_h_off,
         g_a, tau_a,
         A_sc, tau_sc_on, tau_sc_off, sc_delay, tau_scg,
+        tau_sc_off2, w_sc,
     ) = params
 
     tau_E = stage1_frozen["tau_E"]
@@ -530,7 +545,8 @@ def loss_stage2(params, stage1_frozen, bins_plot, vivo_rate, vivo_smooth):
         g_T, V_half_T, k_T, tau_hT, E_Ca,
         g_h, V_half_h, tau_h_on, tau_h_off,
         g_a, tau_a,
-        A_sc, tau_sc_on, tau_sc_off, sc_delay, tau_scg, TIME_STAGE2,
+        A_sc, tau_sc_on, tau_sc_off, sc_delay, tau_scg,
+        tau_sc_off2, w_sc, TIME_STAGE2,
     )
 
     if not np.all(np.isfinite(rates)):
