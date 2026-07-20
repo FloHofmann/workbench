@@ -21,6 +21,7 @@ from vivo_target import load_vivo_psth
 _S1_KEYS = ["tau_E", "tau_I", "I_baseline", "J1", "KAPPA_E", "W_IE", "KAPPA_I", "W_EI",
             "I_HD", "W_GLOBAL"]
 # Indices INSIDE the stage-2 parameter vector (PARAM_NAMES[10:]) for ablation.
+_FC_IDX = 0                  # A_fast (fast-component drive amplitude)
 _GT_IDX, _GH_IDX = 4, 9      # g_T, g_h (intrinsic channels)
 _GA_IDX = 13                 # g_a  (global adaptation -> width recovery)
 _SC_IDX = 15                 # A_sc (global SC input amplitude -> the SC hump)
@@ -143,6 +144,72 @@ def diagnose(stage1_frozen, stage2_params, vivo=None, title="", t_lo=None, t_hi=
     print(f"SC-window anti-PD max: {anti[sc].max():.1f} Hz (should be near baseline)")
     late = (t > 500) & (t < 700)
     print(f"recovery: PD {np.mean(pd[late]):.1f} Hz @500-700 (baseline ~37; should return)")
+    return r2
+
+
+def decompose(stage1_frozen, stage2_params, vivo=None, title="", t_lo=None, t_hi=None):
+    """One-panel component decomposition of the PD response.
+
+    Overlays the full model against single-component knockouts so each
+    component's contribution reads off directly:
+      -SC       (A_sc=0)        -> the phasic re-excitation hump
+      -adapt    (g_a=0)         -> width/rate recovery (knockout latches)
+      -channels (g_T=g_h=0)     -> I_T/I_h shaping of the SC
+      -FC       (A_fast=0)      -> the fast-component spike + the dip that follows
+
+    stage1_frozen : dict keyed by _S1_KEYS (the 10 geometry params).
+    stage2_params : the 22 stage-2 values (PARAM_NAMES[10:] order).
+    vivo          : optional (bins, vrate, vsmooth) to overlay; defaults to the
+                    population target. Pass a cell's own (bins, pd_rate, pd_smooth).
+    Returns the R^2 of the full PD fit (on the fit window).
+    """
+    if vivo is None:
+        vivo = load_vivo_psth()
+    bins, vrate, vsmooth = vivo
+    t_lo = oe.WIN_LO if t_lo is None else t_lo
+    t_hi = oe.WIN_HI if t_hi is None else t_hi
+
+    t, rates = _run(stage1_frozen, stage2_params)
+    pd = rates[:, oe._IDX_0]
+
+    knockouts = [
+        ("-SC (A_sc=0)", [_SC_IDX], "crimson"),
+        ("-adaptation (g_a=0)", [_GA_IDX], "darkorange"),
+        ("-channels (g_T=g_h=0)", [_GT_IDX, _GH_IDX], "seagreen"),
+        ("-FC (A_fast=0)", [_FC_IDX], "slateblue"),
+    ]
+    traces = {}
+    for label, idxs, _ in knockouts:
+        p = list(stage2_params)
+        for i in idxs:
+            p[i] = 0.0
+        _, rr = _run(stage1_frozen, p)
+        traces[label] = rr[:, oe._IDX_0]
+
+    win = (bins >= oe.WIN_LO) & (bins <= oe.WIN_HI)
+    r2 = _r2(np.interp(bins[win], t, pd), vrate[win])
+
+    vwin = (bins >= t_lo) & (bins <= t_hi)
+    fig, ax = plt.subplots(figsize=(9, 5.5))
+    ax.plot(bins[vwin], vrate[vwin], color="0.6", lw=1.2, label="in vivo (raw)")
+    ax.plot(t, pd, color="black", lw=2.6, label="full model")
+    for (label, _, color) in knockouts:
+        ax.plot(t, traces[label], color=color, lw=1.6, ls="--", label=label)
+    ax.set_xlim(t_lo, t_hi)
+    ax.set_ylim(0, max(np.max(pd), np.max(vrate[vwin])) * 1.15)
+    ax.set_xlabel("time rel. stim (ms)")
+    ax.set_ylabel("PD firing rate (Hz)")
+    ax.set_title((title or "component decomposition") + f"   R2={r2:.3f}")
+    ax.legend(fontsize=8)
+    ax.grid(alpha=0.3)
+    fig.tight_layout()
+    plt.show()
+
+    print(f"PD fit R2 = {r2:.3f}")
+    m = (t > 40) & (t < 300)
+    print(f"SC-window PD max: full {pd[m].max():.1f} Hz | "
+          f"-SC {traces['-SC (A_sc=0)'][m].max():.1f} | "
+          f"-channels {traces['-channels (g_T=g_h=0)'][m].max():.1f} Hz")
     return r2
 
 
