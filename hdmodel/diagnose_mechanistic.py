@@ -16,7 +16,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 import optimization_engine as oe
-from vivo_target import load_vivo_psth
+from vivo_target import load_target
 
 _S1_KEYS = ["tau_E", "tau_I", "I_baseline", "J1", "KAPPA_E", "W_IE", "KAPPA_I", "W_EI",
             "I_HD", "W_GLOBAL"]
@@ -46,7 +46,7 @@ def diagnose(stage1_frozen, stage2_params, vivo=None, title="", t_lo=None, t_hi=
     always computed on the fit window, not the plotting window.
     """
     if vivo is None:
-        vivo = load_vivo_psth()
+        vivo = load_target()
     bins, vrate, vsmooth = vivo
     t_lo = oe.WIN_LO if t_lo is None else t_lo
     t_hi = oe.WIN_HI if t_hi is None else t_hi
@@ -164,7 +164,7 @@ def decompose(stage1_frozen, stage2_params, vivo=None, title="", t_lo=None, t_hi
     Returns the R^2 of the full PD fit (on the fit window).
     """
     if vivo is None:
-        vivo = load_vivo_psth()
+        vivo = load_target()
     bins, vrate, vsmooth = vivo
     t_lo = oe.WIN_LO if t_lo is None else t_lo
     t_hi = oe.WIN_HI if t_hi is None else t_hi
@@ -214,9 +214,21 @@ def decompose(stage1_frozen, stage2_params, vivo=None, title="", t_lo=None, t_hi
 
 
 if __name__ == "__main__":
-    # Hand-picked starting params (pre-optimization sanity check).
-    frozen = dict(tau_E=20.0, tau_I=8.0, I_baseline=20.0, J1=20.0,
-                  KAPPA_E=8.0, W_IE=12.0, KAPPA_I=2.0, W_EI=4.0)
-    # A_fast, fc_dur, stim_delay, reversal, g_T,V_half_T,k_T,tau_hT,E_Ca, g_h,V_half_h,tau_h
-    p = [1500.0, 3.0, 10.0, -35.0, 40.0, 5.0, 8.0, 40.0, 120.0, 15.0, -10.0, 250.0]
-    diagnose(frozen, p, title="I_T + I_h diagnostic (hand-picked params)")
+    # Run the diagnostic on the ACTUAL fitted parameters and save the figure.
+    # (The old block here passed hand-picked 8+12 params from a superseded
+    # parameterization -- the model is 10+22 now, so it could not run.)
+    import json
+    import pathlib
+
+    plt.switch_backend("Agg")  # save instead of blocking on a window
+
+    here = pathlib.Path(__file__).resolve().parent
+    fit = json.load(open(here / "_full_fit_result.json"))["params"]
+    frozen = {k: fit[k] for k in _S1_KEYS}
+    stage2 = [fit[k] for k in oe.PARAM_NAMES[10:]]
+
+    diagnose(frozen, stage2, title="mechanistic model vs population PSTH")
+
+    out = here / "_diagnostic.png"
+    plt.figure(plt.get_fignums()[-1]).savefig(out, dpi=150)
+    print(f"saved -> {out}")

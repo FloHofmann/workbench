@@ -26,6 +26,16 @@ NOT in the input**: the ring gates the global SC by bump-membership, so the tune
 **output** emerges from the network (Section 7.3). The **dip**, **selectivity**, and
 **recovery** are likewise genuine AD-network properties, not imposed on any input.
 
+> **⚠️ Provenance of the anti-PD observation (corrected 2026-07-21).** The "anti-PD shows
+> only the FC" constraint above is **real but comes from a separate dataset that is not in
+> this repo.** The `soso` data fitted here is **head-fixed with the cell held at its PD for
+> the whole recording**, and its four speakers are **sound-source locations, not head
+> directions** — so this dataset **cannot test direction-selectivity at all**, and every
+> trace in it is a PD trace. Treat the anti-PD behaviour as an **external constraint the
+> model was built to respect**, and the emergent bump-gating below (§7.3, §8b, §9) as a
+> **model-sufficiency result**, not something validated by the data fitted here. See
+> [DATA.md](DATA.md) and [CLAIMS.md](CLAIMS.md).
+
 The substrate is the HD system: HD cells fire as a function of head azimuth and are
 thought to be maintained by a **continuous (ring) attractor** — a localized "bump" of
 activity on a ring of cells ordered by preferred direction
@@ -366,7 +376,7 @@ obtained by a **direct R²-search with a validity gate** ([`_run_full_fit.py`](_
 that rejects any non-recovering or degenerate solution (baseline must be a real ~40 Hz
 bump; rate and width must return near baseline by 600 ms). **Ablation** verifies the
 mechanism split: $A_{sc}=0$ collapses the SC (88→55 Hz); $g_a=0$ leaves the bump stuck
-broad; $W_{\text{glob}}=0$ makes it blow up. Best fit: **R² ≈ 0.92** on the [-50, 700] ms
+broad; $W_{\text{glob}}=0$ makes it blow up. Best fit: **R² = 0.9534** on the [-50, 700] ms
 window — with a **fully untuned SC input** whose tuned, PD-selective output emerges from
 the bump-gate. (An earlier version that injected a *spatially tuned* SC reached 0.945;
 the ~0.03 cost buys emergent tuning — anti-PD 0, SC ~88 Hz decaying to baseline.)
@@ -384,6 +394,44 @@ tau_h_off, g_a, tau_a, A_sc, tau_sc_on, tau_sc_off, sc_delay, tau_scg, tau_sc_of
 `tau_sc_off`/`tau_sc_off2`/`w_sc`) + its bump-gate memory `tau_scg`).
 **Fixed constants:** `N=120, DT=0.2, GAIN_SLOPE=6, R_MAX=1000 (safety clip),
 KAPPA_HD=2, K_H_SLOPE=8, REC_HALF=10`.
+
+---
+
+## 11b. Notation (symbol glossary)
+
+So this document stands on its own for a reader who did not build it. **Units:** this is a
+firing-rate model — `u` is an abstract membrane-potential-like *activation* (call it
+"u-units", loosely mV-like), `r` is a firing rate in **Hz**, times are **ms**, gains/gates
+are dimensionless. It is not a conductance-based (mV/nA) model.
+
+| symbol (code) | meaning | units |
+|---|---|---|
+| `N` | number of excitatory ring cells (=120) | count |
+| $\theta_i$ | preferred direction of cell *i* | rad |
+| $\Delta\theta_{ij}$ | angular difference $\theta_i-\theta_j$ | rad |
+| $u^E_i$ (`u_E`) | excitatory activation (membrane-like) | u-units |
+| $u^I_i$ (`u_I`) | interneuron activation | u-units |
+| $r_E=f(u^E)$ | excitatory firing rate | Hz |
+| $r_I=[u^I]_+$ | interneuron firing rate | Hz |
+| $\overline{r_E}$ | mean excitatory rate over the ring | Hz |
+| $f(\cdot)$, `GAIN_SLOPE`, `R_MAX` | threshold-linear gain; slope (=6); safety clip (=1000) | Hz/u-unit, Hz |
+| $K^E,K^I$; $\kappa_E,\kappa_I$ (`KAPPA_E/I`) | narrow-E / broad-I connectivity kernels; their concentrations | — |
+| `J1` | recurrent excitation gain | — |
+| `W_IE` / `W_EI` | tuned (Mexican-hat) inhibition gain / E→I drive gain | — |
+| `W_GLOBAL` ($W_\text{glob}$) | global inhibition gain (∝ total activity) | — |
+| $\tau_E,\tau_I$ | membrane time constants (E, I) | ms |
+| `I_baseline`, `I_HD`, $\kappa_{HD}$ (`KAPPA_HD`) | uniform tonic drive; tuned HD drive amplitude; HD tuning width (=2) | u-units, — |
+| `A_fast`, `fc_stim_duration`, `stim_delay` ($t_0$) | FC volley amplitude; FC pulse width; conduction latency / flash onset | u-units, ms, ms |
+| `reversal_potential` | $u_E$ floor during the stimulus | u-units |
+| $I^T$, `g_T`, $m_T$, $h_T$ | T-type Ca²⁺ current; conductance; activation / inactivation gates | u-units, —, 0–1 |
+| `V_half_T` ($V^T_{1/2}$), `k_T`, $\tau_{hT}$, `E_Ca` | I_T half-activation / slope / inactivation τ / Ca reversal (=80) | u-units, u-units, ms, u-units |
+| $\text{rec}_E=J_1(K^Er_E)$, `REC_HALF` ($\text{REC}_{1/2}$) | recurrent-excitation signal (gate input); gate half-saturation (=10) | u-units |
+| $I^h$, `g_h`, $m_h$, `V_half_h`, `K_H_SLOPE`, $\tau_{h,\text{on/off}}$ | HCN current; conductance; gate; half-activation; slope (=8); charge/decay τ | u-units, —, 0–1, u-units, u-units, ms |
+| $a$, `g_a`, $\tau_a$ | global adaptation state (low-pass of $\overline{r_E}$); gain; time constant | Hz, —, ms |
+| $I^{SC}_i$, `A_sc` | gated global SC input; its amplitude | u-units |
+| `tau_sc_on`, `tau_sc_off`, `tau_sc_off2`, `w_sc` ($w$), `sc_delay` | SC EPSC rise; slow/fast decay; slow-component weight; onset delay | ms, ms, ms, 0–1, ms |
+| $\text{sc\_gate}_i$, $\ell_i$, `tau_scg` | bump-membership gate (emergent tuning); its low-passed drive; gate memory τ | 0–1, u-units, ms |
+| $\sigma(x)$, `DT` | logistic sigmoid $1/(1+e^{-x})$; Euler step (=0.2) | —, ms |
 
 ---
 

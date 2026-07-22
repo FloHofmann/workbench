@@ -79,8 +79,20 @@ def _speaker_matrix(raster_times, raster_rows, parity=None):
 def _pd_anti(row, parity=None):
     """Return (pd_rate, anti_rate) raw PSTHs for one cell, both (n_bins,).
 
-    PD = speaker closest to HDAngle, anti-PD = farthest. Array-format rasters
-    (no speaker separation) -> PD = combined trace, anti = zeros.
+    !! anti_rate IS NOT DATA FOR THIS DATASET -- IT IS ZEROS. !!
+    AD_combined_table is head-fixed with a SINGLE fixed sound location, so the cell
+    sits at its PD throughout and there is no anti-PD condition to measure. Such rows
+    take the ARRAY path below, which returns anti = np.zeros(nbins) -- a placeholder
+    kept only for schema compatibility with downstream loaders. Every `sc_anti_data`
+    derived from it is identically 0.0 and must NEVER be cited as a measurement.
+    (It previously was, yielding a vacuous "0.0 predicted / 0.0 measured" validation.)
+
+    The dict/speaker path below is DEAD for this dataset; it dates from the soso table
+    (4 sound-source locations). Even there it would be wrong: speaker azimuth is a
+    SOUND-SOURCE location, not a head direction, so sorting speakers by
+    |HDAngle - azimuth| does not produce an anti-preferred-direction condition.
+    See DATA.md.
+
     parity=0/1 restricts to even/odd trials (split-half).
     """
     rt, rr = row["RasterTimes"], row["RasterRows"]

@@ -13,6 +13,14 @@ __pycache__/
 *.pdf
 *.png
 
+# Large local SOURCE data tables (keep locally, do not version).
+# Deliberately NOT a blanket *.parquet: the small optimized_cells_*.parquet model
+# results are tracked on purpose.
+hdmodel/soso_comb.parquet
+hdmodel/AD_combined_table.mat
+*_comb.parquet
+*_combined_table.mat
+
 # Distribution / packaging
 .Python
 build/

@@ -4,13 +4,13 @@ import pathlib
 import numpy as np
 from scipy.optimize import differential_evolution, minimize
 import optimization_engine as oe
-from vivo_target import load_vivo_psth
+from vivo_target import load_target
 
 
 N_SEEDS = 18  # the 27-D landscape is multimodal -> multistart, keep the best basin
 
 
-def score(x, bins, vr, vs):
+def score(x, bins, vr, vs, gate_mode=oe.GATE_REC, require_anti_silent=True):
     """Return (R2, valid). Rank candidates by R2 (the loss is NOT R2-aligned: its
     regularizers can let a flat low-R2 trace score a lower total loss), but only
     among STRUCTURALLY VALID fits (single baseline bump, anti-PD silent, the bump
@@ -18,18 +18,28 @@ def score(x, bins, vr, vs):
     s1, s2 = list(x[:10]), list(x[10:])
     _, ri = oe.run_model_idle(*s1)
     pf = ri[-1, :]; pk = pf.max()
-    # Baseline must be a REAL ~40 Hz bump (was 20-90, which let the fit cheat with a
-    # weak 28 Hz baseline so a flat elevated plateau counted as "recovered").
-    if not np.all(np.isfinite(pf)) or pk < 33 or pk > 47:
+    # Baseline must be a REAL bump at the DATA's own baseline rate (was 20-90, which let
+    # the fit cheat with a weak 28 Hz baseline so a flat elevated plateau counted as
+    # "recovered"). Derived from vr, not hardcoded: the old fixed 33-47 Hz window was
+    # tuned to soso (~36.5 Hz) and rejects every AD fit (~24.1 Hz). +/-17.5%, the same
+    # relative tolerance the 40 +/- 7 window encoded.
+    pre = (bins >= -50) & (bins < 0)
+    base_hz = float(np.mean(vr[pre])) if np.any(pre) else 40.0
+    if not np.all(np.isfinite(pf)) or pk < 0.825 * base_hz or pk > 1.175 * base_hz:
         return -1e9, False
     base_fwhm = (pf >= pk / 2).sum() * 360 / oe.N
     if base_fwhm < 45 or base_fwhm > 95 or pf[oe.OFF_LOBE].max() / pk > 0.10:
         return -1e9, False
-    t, rr = oe.run_model_stim(*s1, *s2)
+    t, rr = oe.run_model_stim(*s1, *s2, gate_mode=gate_mode)
     if not np.all(np.isfinite(rr)):
         return -1e9, False
     m = (t > 40) & (t < 700)
-    if rr[:, oe._IDX_180][m].max() > 6:                 # anti-PD must be silent
+    # anti-PD silence. NOTE: this is a MODEL assumption, not a data constraint -- neither
+    # dataset here has an anti-PD condition (see DATA.md). It must be switched OFF when
+    # comparing gate mechanisms, otherwise the no-gate control is disqualified before it
+    # can compete and the comparison is circular. compare_gates.py passes False and
+    # reports anti-PD as an OUTCOME instead.
+    if require_anti_silent and rr[:, oe._IDX_180][m].max() > 6:
         return -1e9, False
     # RECOVERY (RELATIVE to the idle baseline, not an absolute cutoff): by ~600 ms
     # the SC must have decayed back to ~baseline in BOTH rate and width -- no
@@ -50,7 +60,7 @@ def score(x, bins, vr, vs):
 
 
 def main():
-    bins, vr, vs = load_vivo_psth()
+    bins, vr, vs = load_target()
     args = (bins, vr, vs)
 
     best_x, best_r2 = None, -1e9

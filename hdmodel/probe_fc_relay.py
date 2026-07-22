@@ -85,8 +85,8 @@ def main():
     x0 = np.array([pop[k] for k in oe.PARAM_NAMES])
     ia = oe.PARAM_NAMES.index("A_fast")
 
-    from vivo_target import load_vivo_psth
-    bins, vr, _ = load_vivo_psth()
+    from vivo_target import load_target
+    bins, vr, _ = load_target()
 
     _, ri = oe.run_model_idle(*x0[:10])
     pf = ri[-1, :]

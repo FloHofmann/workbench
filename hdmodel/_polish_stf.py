@@ -7,10 +7,10 @@ import json
 import numpy as np
 from scipy.optimize import minimize
 import optimization_engine as oe
-from vivo_target import load_vivo_psth
+from vivo_target import load_target
 from _run_full_fit import score
 
-bins, vr, vs = load_vivo_psth()
+bins, vr, vs = load_target()
 p = json.load(open("_full_fit_result.json"))["params"]
 x0 = np.array([p[k] for k in oe.PARAM_NAMES])
 lo = np.array([b[0] for b in oe.JOINT_BOUNDS]); hi = np.array([b[1] for b in oe.JOINT_BOUNDS])

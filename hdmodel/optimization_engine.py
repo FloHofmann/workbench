@@ -35,6 +35,30 @@ K_H_SLOPE = 8.0
 # instead of dissolving/broadening from a global rebound.
 REC_HALF = 10.0
 
+# --- SC gate modes (the mechanism under test; see compare_gates.py) --------------
+# All modes share the SAME 32-parameter vector -- `tau_scg` doubles as the Mg mode's
+# dendritic time constant -- so no variant can win by being more flexible.
+GATE_REC = 0     # low-passed recurrent drive (bump membership). The current model.
+GATE_MG = 1      # NMDA Mg2+ block on low-passed u_E -> VOLTAGE-dependent gate.
+GATE_NONE = 2    # no gate at all (plain global SC input). Necessity control.
+GATE_NOSC = 3    # A_sc suppressed entirely -> pure I_T post-inhibitory rebound.
+GATE_TUNED = 4   # SC input arrives already PD-tuned. REFERENCE ONLY, not a mechanism.
+# Disambiguation pair: rec and mg differ in TWO ways at once (what drives the gate AND
+# its functional form). These two complete a 2x2 so the factors separate:
+#            driver = rec_E     driver = u_E
+#   MM form      GATE_REC         GATE_MM_U
+#   J-S form     GATE_MG_REC      GATE_MG
+GATE_MG_REC = 5  # Jahr-Stevens FORM driven by recurrent excitatory drive.
+GATE_MM_U = 6    # Michaelis-Menten FORM driven by membrane potential.
+
+# NMDA Mg2+ block constants, Jahr & Stevens (1990). Identical to readout_cell_v3.py so
+# the ring and per-cell models use the same biophysics.
+V_REST = -65.0    # mV, resting potential the activation variable rides on
+K_V = 1.5         # mV per unit of u_E
+MG_K = 3.57
+MG_SLOPE = 0.062
+MG_CONC = 1.0     # mM, physiological. FIXED: a bath condition, not a fitted property.
+
 # Global (untuned) inhibition proportional to TOTAL excitatory activity is a FITTED
 # Stage-1 param (W_GLOBAL). The broad attractor state has MORE total activity than
 # the sharp one, so global inhibition destabilizes it -> the ring becomes monostable
@@ -265,7 +289,7 @@ def _simulate_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I
                    g_h, V_half_h, tau_h_on, tau_h_off,
                    g_a, tau_a,
                    A_sc, tau_sc_on, tau_sc_off, sc_delay, tau_scg,
-                   tau_sc_off2, w_sc, time):
+                   tau_sc_off2, w_sc, time, gate_mode=GATE_REC):
     # Tuned connectivity (see _simulate_idle): narrow excite, broad inhibit.
     K_E = np.exp(KAPPA_E * (COS_D_THETA - 1.0)) / N
     K_I = np.exp(KAPPA_I * (COS_D_THETA - 1.0)) / N
@@ -312,11 +336,43 @@ def _simulate_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I
         rec_E = J1 * (K_E @ r_E)
         # Bump-membership gate for I_T (instantaneous): ~1 on the bump, ~0 at antipode.
         rec_gate = rec_E / (rec_E + REC_HALF)
-        # SC gate: same idea but on a low-passed rec_E (memory tau_scg), so the brief
-        # dip does not slam it shut -> the SC enters smoothly, no spike. Antipode
-        # rec_E ~0 -> sc_lp ~0 -> gate ~0 -> still silent.
-        sc_lp += (rec_E - sc_lp) * (DT / tau_scg)
-        sc_gate = sc_lp / (sc_lp + REC_HALF)
+
+        # ---- SC GATE (the mechanism under test; see compare_gates.py) ----------
+        # Every mode low-passes its driving signal with tau_scg (= tau_dend in the Mg
+        # mode) so the brief dip cannot slam the gate shut. Modes differ ONLY in what
+        # drives the gate, and the parameter vector is IDENTICAL across modes, so no
+        # variant can win on extra flexibility.
+        if gate_mode == GATE_MG:
+            # NMDA Mg2+ block (Jahr & Stevens 1990) on a dendritically low-passed
+            # membrane potential -> a VOLTAGE-dependent gate. Same constants as
+            # readout_cell_v3.py. [Mg] is FIXED at the physiological 1 mM (a bath
+            # condition, not a fitted cell property), so this costs the same one free
+            # parameter (tau_scg-as-tau_dend) as the rec gate.
+            sc_lp += (u_E - sc_lp) * (DT / tau_scg)
+            sc_gate = 1.0 / (1.0 + (MG_CONC / MG_K) * np.exp(-MG_SLOPE * (V_REST + K_V * sc_lp)))
+        elif gate_mode == GATE_MG_REC:
+            # Jahr-Stevens sigmoid, but driven by RECURRENT DRIVE instead of u_E.
+            sc_lp += (rec_E - sc_lp) * (DT / tau_scg)
+            sc_gate = 1.0 / (1.0 + (MG_CONC / MG_K) * np.exp(-MG_SLOPE * (V_REST + K_V * sc_lp)))
+        elif gate_mode == GATE_MM_U:
+            # Michaelis-Menten saturation, but driven by MEMBRANE POTENTIAL instead of
+            # rec_E. u_E can go negative during the dip -> rectify before saturating.
+            sc_lp += (u_E - sc_lp) * (DT / tau_scg)
+            pos = np.maximum(sc_lp, 0.0)
+            sc_gate = pos / (pos + REC_HALF)
+        elif gate_mode == GATE_TUNED:
+            # Reference upper bound ONLY, not a candidate mechanism: assumes the slow
+            # input already arrives PD-tuned, for which there is no plausible in-vivo
+            # connectivity. Included because it fits better and must be addressed.
+            sc_gate = HD_SHAPE
+        elif gate_mode == GATE_NONE or gate_mode == GATE_NOSC:
+            sc_gate = np.ones(N)          # no gating at all (necessity control)
+        else:
+            # GATE_REC (current model): low-passed recurrent drive = bump membership.
+            # Antipode rec_E ~0 -> sc_lp ~0 -> gate ~0 -> silent. NETWORK-state driven,
+            # with no voltage dependence.
+            sc_lp += (rec_E - sc_lp) * (DT / tau_scg)
+            sc_gate = sc_lp / (sc_lp + REC_HALF)
 
         # Intrinsic currents are GATED OFF (gates frozen at 0, currents 0) until
         # the flash actually arrives (stim_onset). Pre-stim the off-bump cells are
@@ -361,7 +417,7 @@ def _simulate_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I
         # GLOBAL SC input (spatially uniform double-exponential), gated by
         # bump-membership -> tuned SC OUTPUT, antipode silent. The tuning is a
         # network property (rec_gate), NOT spatial tuning of the input.
-        if t >= sc_onset:
+        if t >= sc_onset and gate_mode != GATE_NOSC:
             dt_sc = t - sc_onset
             # NMDA-like EPSC: rise * bi-exponential decay (GluN2A fast + GluN2B slow).
             decay = w_sc * np.exp(-dt_sc / tau_sc_off) + (1.0 - w_sc) * np.exp(-dt_sc / tau_sc_off2)
@@ -412,7 +468,7 @@ def run_model_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I
                    g_a, tau_a,
                    A_sc, tau_sc_on, tau_sc_off, sc_delay, tau_scg,
                    tau_sc_off2, w_sc,
-                   F_matrix=None, F_inv_matrix=None):
+                   F_matrix=None, F_inv_matrix=None, gate_mode=GATE_REC):
     return _simulate_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I_HD,
                           W_GLOBAL,
                           A_fast, fc_stim_duration, stim_delay, reversal_potential,
@@ -420,7 +476,7 @@ def run_model_stim(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I
                           g_h, V_half_h, tau_h_on, tau_h_off,
                           g_a, tau_a,
                           A_sc, tau_sc_on, tau_sc_off, sc_delay, tau_scg,
-                          tau_sc_off2, w_sc, TIME)
+                          tau_sc_off2, w_sc, TIME, gate_mode)
 
 
 # Precompute the index/angle anchors used by the losses.
@@ -441,7 +497,14 @@ def _circular_center(profile):
 
 
 # implementation of the loss function
-def loss_stage1(params):
+def loss_stage1(params, baseline_hz=40.0):
+    """Baseline-geometry regularizers.
+
+    `baseline_hz` is the target idle bump peak. It is DATASET-DEPENDENT (soso ~36.5 Hz,
+    AD ~24.1 Hz) and is derived from the actual target trace by `loss_joint`, so the
+    dataset assumption is never hardcoded here. The 40.0 default is only for legacy
+    direct callers.
+    """
     tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I_HD, W_GLOBAL = params
 
     _, rates = _simulate_idle(tau_E, tau_I, I_baseline, J1, KAPPA_E, W_IE, KAPPA_I, W_EI, I_HD,
@@ -453,7 +516,7 @@ def loss_stage1(params):
     peak_fr = np.max(steady_state_profile)
 
     loss_val = 0.0
-    loss_val += (peak_fr - 40.0) ** 2
+    loss_val += (peak_fr - baseline_hz) ** 2
 
     if peak_fr > 1.0:
         half_max = peak_fr / 2.0
@@ -607,6 +670,12 @@ def loss_stage2(params, stage1_frozen, bins_plot, vivo_rate, vivo_smooth):
     # DEEP brief dip, so PD can crash negative (HCN charges) and still re-form fast
     # and PD-selectively. The dip-exists guard above + the MSE keep the dip sane.
 
+    # Target baseline derived from the DATA, not hardcoded: it is dataset-dependent
+    # (soso ~36.5 Hz, AD ~24.1 Hz) and a fixed 40 Hz silently breaks every other
+    # dataset. See DATA.md / vivo_target.DATASET.
+    _pre = (bins_plot >= -50) & (bins_plot < 0)
+    baseline_hz = float(np.mean(vivo_rate[_pre])) if np.any(_pre) else 40.0
+
     # --- STRUCTURAL REGULARIZERS ---
     # (a) anti-PD must stay near-silent during the SC window (40-300 ms): the
     #     rebound is a PD-only phenomenon. The channels de-inactivate the antipode
@@ -626,13 +695,15 @@ def loss_stage2(params, stage1_frozen, bins_plot, vivo_rate, vivo_smooth):
     recov_mask = (t_model > 500.0) & (t_model < 700.0)
     if recov_mask.sum() > 0:
         recov_pd = np.mean(pd_trace[recov_mask])
-        loss_val += (recov_pd - 40.0) ** 2 * 3.0
+        loss_val += (recov_pd - baseline_hz) ** 2 * 3.0
 
     # single-bump topology over the stable late window (keep the attractor intact).
     stable_mask = (t_model > 100.0) & (t_model < 700.0)
     late_profile_mean = np.mean(rates[stable_mask, :], axis=0)
     late_peak = np.max(late_profile_mean)
-    loss_val += (np.maximum(0.0, 10.0 - late_peak)) ** 2 * 50.0
+    # bump-didn't-die floor, kept at the same FRACTION of baseline as the old fixed
+    # 10 Hz against a 40 Hz target (25%).
+    loss_val += (np.maximum(0.0, 0.25 * baseline_hz - late_peak)) ** 2 * 50.0
 
     if late_peak > 1.0:
         center = _circular_center(late_profile_mean)
@@ -677,7 +748,12 @@ def loss_joint(params, bins_plot, vivo_rate, vivo_smooth, w_baseline=4.0):
     """
     s1 = params[:10]
     s2 = params[10:]
-    base = loss_stage1(s1)
+    # Derive the target idle baseline from the DATA rather than hardcoding it, so the
+    # loss follows whichever dataset is active (vivo_target.DATASET). soso ~36.5 Hz,
+    # AD ~24.1 Hz -- a hardcoded 40 Hz silently rejects every AD fit.
+    pre = (bins_plot >= -50) & (bins_plot < 0)
+    baseline_hz = float(np.mean(vivo_rate[pre])) if np.any(pre) else 40.0
+    base = loss_stage1(s1, baseline_hz)
     if base >= 1e6:
         return 1e6
     frozen = dict(zip(PARAM_NAMES[:10], s1))

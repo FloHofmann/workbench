@@ -36,7 +36,7 @@ import pandas as pd
 from scipy.optimize import minimize
 
 import optimization_engine as oe
-from vivo_target import load_vivo_psth
+from vivo_target import load_target
 from probe_fc_relay import ring_metrics
 from _run_full_fit import score
 
@@ -77,7 +77,7 @@ def refit(x0, fix_i, bounds, args):
 def main():
     pop = json.load(open(HERE / "_full_fit_result.json"))["params"]
     x0 = np.array([pop[k] for k in NAMES])
-    bins, vr, vs = load_vivo_psth()
+    bins, vr, vs = load_target()
     _, ri = oe.run_model_idle(*x0[:10])
     pf = ri[-1, :]; base_pk = pf.max(); base_fwhm = (pf >= base_pk / 2).sum() * 360 / oe.N
     med = {p: float(pop[p]) for p in NAMES}

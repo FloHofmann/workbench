@@ -66,8 +66,8 @@ def sweep_cell():
 def sweep_ring():
     pop = json.load(open(HERE / "_full_fit_result.json"))["params"]
     x0 = np.array([pop[k] for k in oe.PARAM_NAMES])
-    from vivo_target import load_vivo_psth
-    b, vr, _ = load_vivo_psth()
+    from vivo_target import load_target
+    b, vr, _ = load_target()
     bounds = dict(zip(oe.PARAM_NAMES, oe.JOINT_BOUNDS))
 
     fig, axes = _grid(6, len(oe.PARAM_NAMES))
