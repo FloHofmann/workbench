@@ -1,5 +1,58 @@
 # OPEN ISSUES — surviving findings from the first review round
 
+## NEW 2026-07-24 — two findings that outrank everything below
+
+**N1. The recovery gate was stricter than the data — ✅ FIXED AND RE-RUN 2026-07-24.**
+`evaluate()` rejected any fit whose PD rate at 600 ms exceeded **1.35×** baseline, while the
+AD data itself sits at **1.55×** (per-cell median 1.55, IQR 1.21–1.89) — *the SC has not
+decayed by 600 ms*, so the gate would have **rejected the real trace**. Now derived from the
+target (`1.35 × data recovery` = 2.10× on AD), same rule as `probe_sc_feasibility.py`.
+
+Re-run (`compare_gates_recovfix.csv`, warm-start only, 10 splits). Held-out R² vs a ~39-cell
+mean, ceiling 0.934:
+
+| mode | CV R² (fixed) | CV R² (pre-fix) | Δ | SD |
+|---|---|---|---|---|
+| rec | **+0.758** | +0.689 | +0.069 | 0.136 |
+| **tuned** | **+0.732** | +0.460 | **+0.271** | **0.076** |
+| mg | +0.429 | +0.386 | +0.043 | 0.245 |
+| none | +0.002 | −0.027 | +0.029 | 0.254 |
+| noSC | −0.875 | −0.886 | +0.011 | 0.331 |
+
+Three things follow, and only one of them was expected:
+
+1. **The bound was NOT the explanation for the full model's ceiling.** Full-data `rec` scores
+   **0.8187** with the corrected bound vs 0.819 before — unchanged. `mg` and `noSC` come back
+   *bit-identical* to the `_indep` run (0.429252 / −0.874592 to 6 d.p.), i.e. the recovery
+   constraint was never binding for them. So the gate-free minimal model's **0.948 vs 0.819**
+   advantage is real, not a constraint artefact. **N3 below is now the live hypothesis.**
+2. **The ordering at the top survives, but `tuned` is no longer beaten.** It gains +0.271 —
+   by far the largest effect of the fix — and now ties `rec` (0.732 vs 0.758) with **half the
+   variance across splits** (0.076 vs 0.136). `tuned` is a *reference bound, not a mechanism*
+   (no plausible in-vivo connectivity delivers a PD-aligned salience projection), so this does
+   not promote it — but "the recurrent gate beats the tuned upper bound" was partly an
+   artefact of a bad constraint and must not be repeated.
+3. **The Mg claim still loses decisively** (0.429 vs 0.758), and `none` ≈ 0 still says a gate
+   is needed *within this 32-parameter architecture*. Neither conclusion changes.
+
+**N3. The 0.948-vs-0.819 gap is unexplained, and the leading candidate is the inhibition
+architecture, not the gate.** The full model's `none` mode (global SC, no gate) scores ≈0 and
+leaks 39.3 Hz at the antipode, while the 17-parameter minimal model with a global SC and *no
+gate* reaches 0.948 with the antipode at 0.0 Hz. The two are not the same model: the minimal
+winner runs **pure global inhibition** (`W_IE = W_EI = 0`), which the full model's `none` does
+not — it keeps the interneuron ring. Note `both` (ring + global) also loses to `global` alone
+in the minimal model (0.854 vs 0.948), which points the same way. Testing this means fitting
+the full architecture with the interneuron ring switched off; it has not been done.
+
+**N2. No fitted model here is a self-sustaining attractor.** Removing the tonic tuned drive
+`I_HD` collapses the bump in the minimal model (26.4 → 2.0 Hz, `J1` = 0.26) *and in the
+original 32-parameter model* (26.7 → 5.1 Hz). Tuning is **inherited**, not maintained by
+recurrence. Consistent with AD inheriting HD tuning from LMN (MODEL.md §6), but it does not
+support the CANN framing of the ring "maintaining" the bump, and it means the Mexican-hat
+connectivity is doing far less work than the write-up implies. See
+[MODEL_INHIBITION_ONLY.md](MODEL_INHIBITION_ONLY.md).
+
+
 Consolidated 2026-07-21. The first adversarial review was run on a briefing that mis-read the
 `soso` data (speaker azimuth ≠ head direction; see [DATA.md](DATA.md)), so the briefing and
 report were discarded. **These findings do not depend on that error** — they are code-grounded

@@ -87,6 +87,11 @@ def evaluate(x, bins, vr, gate_mode):
     pk = float(pf.max())
     pre = (bins >= -50) & (bins < 0)
     base_hz = float(np.mean(vr[pre])) if np.any(pre) else 40.0
+    # Recovery bound DERIVED FROM THIS TARGET, not hardcoded. The old flat 1.35 cap was
+    # tuned on soso; the AD data's own 600 ms rate is ~1.55x its baseline, so that cap
+    # would REJECT THE REAL TRACE and handicap every gated variant (OPEN_ISSUES N1).
+    late = (bins > 550) & (bins < 650)
+    recov_max = 1.35 * (float(np.mean(vr[late])) / base_hz) if np.any(late) else 1.35
 
     v = 0.0
     v += max(0.0, 0.825 * base_hz - pk) / base_hz + max(0.0, pk - 1.175 * base_hz) / base_hz
@@ -100,7 +105,7 @@ def evaluate(x, bins, vr, gate_mode):
     pd600 = float(rr[np.argmin(np.abs(t - 600)), oe._IDX_0])
     p6 = rr[np.argmin(np.abs(t - 600)), :]
     fwhm600 = float((p6 >= p6.max() / 2).sum()) * 360.0 / oe.N
-    v += max(0.0, pd600 / max(pk, 1e-9) - 1.35)
+    v += max(0.0, pd600 / max(pk, 1e-9) - recov_max)
     v += max(0.0, fwhm600 / max(base_fwhm, 1e-9) - 1.35)
 
     if v > 0.0:
@@ -242,7 +247,11 @@ def main():
     half_ceiling = bootstrap_ceiling(per_cell[: n // 2, w])
     print(f"AD dataset: {n} cells, {int(w.sum())} bins in [{oe.WIN_LO}, {oe.WIN_HI}] ms")
     print(f"noise ceiling: full {n}-cell mean {full_ceiling:.4f} | "
-          f"~{n//2}-cell half mean {half_ceiling:.4f}  <- CV reference\n")
+          f"~{n//2}-cell half mean {half_ceiling:.4f}  <- CV reference")
+    _b = float(vr[(bins >= -50) & (bins < 0)].mean())
+    _r = float(vr[(bins > 550) & (bins < 650)].mean()) / _b
+    print(f"baseline {_b:.1f} Hz | data recovery @600ms {_r:.2f}x -> models allowed "
+          f"{1.35 * _r:.2f}x (was a flat 1.35x; OPEN_ISSUES N1)\n")
 
     # ---- full-data fit per mode (also the per-mode warm start for the CV folds) ----
     if args.independent:
